@@ -32,7 +32,7 @@ static void Slider(const char* label, Option& option, float minimum, float maxim
     {
         ImGui::SameLine();
         ImGui::PushID(label);
-        if (ImGui::SmallButton("Reset"))
+        if (ImGui::SmallButton("重置"))
             option = *reset;
         ImGui::PopID();
     }
@@ -71,15 +71,15 @@ static void ConstrainSpatialControls(Spatial::Settings& value, float scale)
 
 static void RenderSpatial(Config* config)
 {
-    Checkbox("Peripheral compression", config->DlssNrSpatialCompression);
+    Checkbox("边缘压缩", config->DlssNrSpatialCompression);
     HelpMarker(
-        "Keep more model detail in the centre and compress the edges. Model resolution still scales the whole image.");
+        "中心保留更多模型细节并压缩边缘，模型分辨率仍缩放整图。");
     bool preview = config->DlssNrDebugView.value_or_default() == 4;
-    if (ImGui::Checkbox("Preview", &preview))
+    if (ImGui::Checkbox("预览", &preview))
         config->DlssNrDebugView = preview ? 4u : 0u;
-    HelpMarker("Show the packed model input before spatial unpacking, scaled to fill the screen. "
-               "This is the same as the Compressed model input debug view. "
-               "Without active compression, shows the ordinary model input. Apply model must be enabled.");
+    HelpMarker("显示空间解包前打包模型输入并铺满屏幕， "
+               "等同压缩模型输入调试视图， "
+               "未启用压缩时显示普通模型输入，需启用应用模型。");
     if (!config->DlssNrSpatialCompression.value_or_default())
         return;
 
@@ -103,22 +103,22 @@ static void RenderSpatial(Config* config)
         if (ImGui::IsItemDeactivatedAfterEdit())
             commit = true;
     };
-    slider("Centre width", pending.centerX, 1.0f, pending.workX - 0.5f);
-    slider("Centre height", pending.centerY, 1.0f, pending.workY - 0.5f);
+    slider("中心宽度", pending.centerX, 1.0f, pending.workX - 0.5f);
+    slider("中心高度", pending.centerY, 1.0f, pending.workY - 0.5f);
     const float minimumWork = Spatial::MinimumWorkPercent(scale);
-    slider("Working width", pending.workX, std::max(minimumWork, pending.centerX + 0.5f), 100.0f);
-    slider("Working height", pending.workY, std::max(minimumWork, pending.centerY + 0.5f), 100.0f);
+    slider("工作宽度", pending.workX, std::max(minimumWork, pending.centerX + 0.5f), 100.0f);
+    slider("工作高度", pending.workY, std::max(minimumWork, pending.centerY + 0.5f), 100.0f);
     const float xLimit = Spatial::MaxCenterOffset(pending.centerX);
     const float yLimit = Spatial::MaxCenterOffset(pending.centerY);
-    slider("Centre horizontal offset", pending.offsetX, -xLimit, xLimit);
-    slider("Centre vertical offset", pending.offsetY, -yLimit, yLimit);
+    slider("中心水平偏移", pending.offsetX, -xLimit, xLimit);
+    slider("中心垂直偏移", pending.offsetY, -yLimit, yLimit);
     const auto xShift = Spatial::WorkShiftLimits(pending, false);
     const auto yShift = Spatial::WorkShiftLimits(pending, true);
-    slider("Working region horizontal shift", pending.shiftX, xShift.first, xShift.second);
-    slider("Working region vertical shift", pending.shiftY, yShift.first, yShift.second);
-    HelpMarker("Extreme shifts can leave an edge with less than one working pixel. Compression then falls back to "
-               "ordinary NR; the status above explains why.");
-    if (ImGui::SmallButton("Reset compression layout"))
+    slider("工作区水平位移", pending.shiftX, xShift.first, xShift.second);
+    slider("工作区垂直位移", pending.shiftY, yShift.first, yShift.second);
+    HelpMarker("过大位移可致边缘不足一工作像素，压缩回退为 "
+               "普通NR，原因见上方状态。");
+    if (ImGui::SmallButton("重置压缩布局"))
     {
         pending = Spatial::Settings {};
         commit = true;
@@ -129,10 +129,10 @@ static void RenderSpatial(Config* config)
         StoreSpatial(config, pending);
         editing = false;
     }
-    Checkbox("Show centre outline", config->DlssNrSpatialShowCenter);
-    Checkbox("Show working region outline", config->DlssNrSpatialShowWork);
-    ImGui::TextWrapped("Centre detail follows Model resolution. Strong edge compression can soften detail or shimmer "
-                       "during movement.");
+    Checkbox("显示中心框线", config->DlssNrSpatialShowCenter);
+    Checkbox("显示工作区框线", config->DlssNrSpatialShowWork);
+    ImGui::TextWrapped("中心细节跟随模型分辨率，强边缘压缩可致细节变软或移动时闪烁， "
+                       "移动中尤甚。");
 }
 
 void RenderInput(Config* config)
@@ -143,7 +143,7 @@ void RenderInput(Config* config)
     int scalePercent =
         pendingScale >= 0 ? pendingScale : (int) lroundf(config->DlssNrWorkingScale.value_or_default() * 100.0f);
 
-    if (ImGui::SliderInt("Model resolution", &scalePercent, 25, 200, "%d%%"))
+    if (ImGui::SliderInt("模型分辨率", &scalePercent, 25, 200, "%d%%"))
         pendingScale = scalePercent;
 
     if (ImGui::IsItemDeactivatedAfterEdit() && pendingScale >= 0)
@@ -158,7 +158,7 @@ void RenderInput(Config* config)
         pendingScale = -1;
     }
 
-    HelpMarker("50% halves width and height. 100% uses the full input size.");
+    HelpMarker("50%宽高减半，100%使用完整输入尺寸。");
     RenderSpatial(config);
 
     if (scalePercent > 100)
@@ -169,65 +169,65 @@ void RenderInput(Config* config)
         if (ds < 0 || ds >= IM_ARRAYSIZE(dsNames))
             ds = (int) Scaler::Lanczos3;
 
-        if (ImGui::Combo("Downscaler (NR)", &ds, dsNames, IM_ARRAYSIZE(dsNames)))
+        if (ImGui::Combo("缩小器（NR）", &ds, dsNames, IM_ARRAYSIZE(dsNames)))
             config->DlssNrScalingDownscaler = (Scaler) ds;
 
-        HelpMarker("Downsampling filter for resolutions above 100%.");
+        HelpMarker("高于100%时的降采样滤波器。");
     }
     {
         const bool reduced = config->DlssNrWorkingScale.value_or_default() < 0.999f;
 
         ImGui::BeginDisabled(!reduced);
 
-        static const char* enlargeNames[] = { "Classic", "Matched residual", "Matched residual + DLSS",
-                                              "Lighting + colour", "Lighting + colour + DLSS" };
+        static const char* enlargeNames[] = { "经典", "匹配残差", "匹配残差+DLSS",
+                                              "灯光+色彩", "灯光+色彩+DLSS" };
         int enlarge = (int) std::min(config->DlssNrTransfer.value_or_default(), 4u);
 
-        if (ImGui::Combo("Enlargement", &enlarge, enlargeNames, IM_ARRAYSIZE(enlargeNames)))
+        if (ImGui::Combo("放大方式", &enlarge, enlargeNames, IM_ARRAYSIZE(enlargeNames)))
             config->DlssNrTransfer = (uint32_t) enlarge;
 
         ImGui::EndDisabled();
 
-        HelpMarker("Below 100%: Lighting + colour resizes lighting gain and colour changes separately, then applies "
-                   "them at full resolution. This can reduce resize halos; fully black pixels remain black. "
-                   "DLSS modes require post-upscale DX12 processing.");
+        HelpMarker("低于100%：灯光+色彩分别缩放灯光增益与色彩变化再应用， "
+                   "可减少缩放光晕，纯黑像素保持黑色， "
+                   "DLSS模式需超分后DX12处理。");
     }
-    static const char* reversibleNames[] = { "Off (soft knee)", "Neutwo proxy + composed", "Neutwo proxy + replace",
-                                             "Hybrid proxy + composed", "Hybrid proxy + replace" };
+    static const char* reversibleNames[] = { "关闭（软拐点）", "Neutwo代理+合成", "Neutwo代理+替换",
+                                             "混合代理+合成", "混合代理+替换" };
     int reversible = (int) config->DlssNrReversibleMode.value_or_default();
     if (reversible < 0 || reversible > 4)
         reversible = 0;
-    if (ImGui::Combo("HDR mapping (experimental)", &reversible, reversibleNames, IM_ARRAYSIZE(reversibleNames)))
+    if (ImGui::Combo("HDR映射（实验）", &reversible, reversibleNames, IM_ARRAYSIZE(reversibleNames)))
         config->DlssNrReversibleMode = (uint32_t) reversible;
 
-    HelpMarker("HDR mapping curve. Replace bypasses strength and highlight controls.");
+    HelpMarker("HDR映射曲线，替换模式跳过强度与高光控制。");
 
     if (reversible == 2 || reversible == 4)
-        Slider("Restore sharpness", config->DlssNrReplaceDetailStrength, 0.0f, 2.0f, "%.2f", 0.0f);
+        Slider("恢复锐度", config->DlssNrReplaceDetailStrength, 0.0f, 2.0f, "%.2f", 0.0f);
 
-    const char* exposureNames[] = { "Manual", "Game exposure", "Automatic HDR exposure" };
+    const char* exposureNames[] = { "手动", "游戏曝光", "自动HDR曝光" };
     const auto source = config->DlssNrWhitePointSource.value_or_default();
     int selected = source == 3 ? 2 : source == 1 ? 1 : 0;
-    if (ImGui::Combo("White point source", &selected, exposureNames, 3))
+    if (ImGui::Combo("白点来源", &selected, exposureNames, 3))
         config->DlssNrWhitePointSource = selected == 2 ? 3u : static_cast<unsigned>(selected);
     if (selected)
     {
         auto& trim = selected == 2 ? config->DlssNrAutoExposureTrim : config->DlssNrWhitePointTrim;
-        Slider("Exposure trim", trim, 0.001f, 1000.0f, "%.3fx", selected == 2 ? 5.0f : 1.0f,
+        Slider("曝光微调", trim, 0.001f, 1000.0f, "%.3fx", selected == 2 ? 5.0f : 1.0f,
                ImGuiSliderFlags_Logarithmic);
         if (selected == 2)
-            Slider("Highlight protection", config->DlssNrAutoExposureHighlightProtection, 0.0f, 100.0f, "%.0f%%", 0.0f);
+            Slider("高光保护", config->DlssNrAutoExposureHighlightProtection, 0.0f, 100.0f, "%.0f%%", 0.0f);
         auto& curve = selected == 2 ? config->DlssNrAutoExposureTrimAnchors : config->DlssNrExposureTrimAnchors;
         char text[512] {};
         const auto value = curve.value_or_default();
         std::memcpy(text, value.data(), std::min(value.size(), sizeof(text) - 1));
-        if (ImGui::InputText("Trim anchors", text, sizeof(text)))
+        if (ImGui::InputText("微调锚点", text, sizeof(text)))
             curve = std::string(text);
-        HelpMarker("Up to eight base-white-point:trim pairs, e.g. 1:5 100:2. Trim interpolates logarithmically. Clear "
-                   "for a fixed trim.");
+        HelpMarker("最多八组基准白点:微调对，如1:5 100:2，对数插值，清空 "
+                   "则用固定微调。");
     }
-    Slider("Paper white", config->DlssNrWhitePointScale, 0.25f, 2000.0f, "%.2fx", {}, ImGuiSliderFlags_Logarithmic);
-    HelpMarker("Higher values darken the NR input; lower values brighten it.");
+    Slider("纸白", config->DlssNrWhitePointScale, 0.25f, 2000.0f, "%.2fx", {}, ImGuiSliderFlags_Logarithmic);
+    HelpMarker("值越大NR输入越暗，越小越亮。");
 }
 
 // Model tuning rebuilds the feature; commit slider changes only on release.
@@ -251,7 +251,7 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
 
     ImGui::SameLine();
 
-    const std::string resetId = std::string("Reset##") + label;
+    const std::string resetId = std::string("重置##") + label;
     if (ImGui::SmallButton(resetId.c_str()))
     {
         if (inheritReset)
@@ -261,14 +261,14 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         pending.erase(id);
     }
 
-    if (std::strcmp(label, "Intensity") == 0)
-        HelpMarker("Enhancement strength. 1 = default.");
-    else if (std::strcmp(label, "Local structure") == 0)
-        HelpMarker("Fine detail and local contrast. 1 = default.");
-    else if (std::strcmp(label, "Local tone") == 0)
-        HelpMarker("Broad lighting changes. Later passes default to 0.");
-    else if (std::strcmp(label, "Skin structure") == 0)
-        HelpMarker("Skin detail. -1 follows Local structure.");
+    if (std::strcmp(label, "强度") == 0)
+        HelpMarker("增强强度，1为默认。");
+    else if (std::strcmp(label, "局部结构") == 0)
+        HelpMarker("精细细节与局部对比，1为默认。");
+    else if (std::strcmp(label, "局部色调") == 0)
+        HelpMarker("大范围光照变化，后续遍数默认0。");
+    else if (std::strcmp(label, "皮肤结构") == 0)
+        HelpMarker("皮肤细节，-1跟随局部结构。");
 }
 
 void RenderModel(Config* config)
@@ -279,23 +279,23 @@ void RenderModel(Config* config)
     static bool editingPasses = false;
     if (!editingPasses)
         passes = (int) std::clamp(config->DlssNrPasses.value_or_default(), 1u, (unsigned) menuPassLimit);
-    ImGui::SliderInt("Model passes", &passes, 1, menuPassLimit, "%d", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SliderInt("模型遍数", &passes, 1, menuPassLimit, "%d", ImGuiSliderFlags_AlwaysClamp);
     editingPasses = ImGui::IsItemActive();
     if (ImGui::IsItemDeactivatedAfterEdit())
         config->DlssNrPasses = (uint32_t) std::clamp(passes, 1, menuPassLimit);
-    if (ImGui::Checkbox("Unlock up to 10 passes", &unlockPasses))
+    if (ImGui::Checkbox("解锁至多10遍", &unlockPasses))
     {
         config->DlssNrUnlockPasses = unlockPasses;
         config->DlssNrPasses = std::clamp(config->DlssNrPasses.value_or_default(), 1u, unlockPasses ? 10u : 2u);
     }
 
     static unsigned selectedPass = 0;
-    const auto selectedLabel = std::format("Pass {}", selectedPass + 1);
-    if (ImGui::BeginCombo("Edit pass", selectedLabel.c_str()))
+    const auto selectedLabel = std::format("第 {} 遍", selectedPass + 1);
+    if (ImGui::BeginCombo("编辑遍数", selectedLabel.c_str()))
     {
         for (unsigned pass = 0; pass <= std::size(config->DlssNrPassOverrides); ++pass)
         {
-            const auto label = std::format("Pass {}", pass + 1);
+            const auto label = std::format("第 {} 遍", pass + 1);
             if (ImGui::Selectable(label.c_str(), selectedPass == pass))
                 selectedPass = pass;
             if (selectedPass == pass)
@@ -304,37 +304,37 @@ void RenderModel(Config* config)
         ImGui::EndCombo();
     }
     if (selectedPass >= config->DlssNrPasses.value_or_default())
-        ImGui::TextDisabled("Inactive pass. Settings apply when this pass is enabled.");
+        ImGui::TextDisabled("非活动遍数，启用后设置生效。");
 
     // Distinct widget IDs keep uncommitted slider edits with their selected pass.
     ImGui::PushID((int) selectedPass);
     const bool inherited = selectedPass != 0;
     const auto tuning = [&](auto& intensity, auto& structure, auto& tone, auto& skin, auto& autoMask)
     {
-        DeferredSlider("Intensity", &intensity, 0.0f, 2.0f,
+        DeferredSlider("强度", &intensity, 0.0f, 2.0f,
                        inherited ? config->DlssNrIntensity.value_or_default() : 1.0f, inherited);
-        DeferredSlider("Local structure", &structure, 0.0f, 2.0f,
+        DeferredSlider("局部结构", &structure, 0.0f, 2.0f,
                        inherited ? config->DlssNrLocalStructure.value_or_default() : 1.0f, inherited);
-        DeferredSlider("Local tone", &tone, 0.0f, 2.0f, inherited ? 0.0f : 1.0f, inherited);
-        DeferredSlider("Skin structure", &skin, -1.0f, 2.0f,
+        DeferredSlider("局部色调", &tone, 0.0f, 2.0f, inherited ? 0.0f : 1.0f, inherited);
+        DeferredSlider("皮肤结构", &skin, -1.0f, 2.0f,
                        inherited ? config->DlssNrSkinStructure.value_or_default() : -1.0f, inherited);
         bool mask = autoMask.value_or(inherited ? config->DlssNrAutoMask.value_or_default() : true);
-        if (ImGui::Checkbox("Auto skin mask", &mask))
+        if (ImGui::Checkbox("自动皮肤遮罩", &mask))
             autoMask = mask;
         if (inherited)
         {
             ImGui::SameLine();
-            if (ImGui::SmallButton("Reset##mask"))
+            if (ImGui::SmallButton("重置##mask"))
                 autoMask = std::optional<bool> {};
         }
-        HelpMarker("Model-based skin selection.");
+        HelpMarker("基于模型的皮肤选择。");
     };
-    static const char* styles[] = { "Standard", "Natural", "Cinematic" };
-    static const char* inheritedStyles[] = { "Auto", "Standard", "Natural", "Cinematic" };
+    static const char* styles[] = { "标准", "自然", "电影" };
+    static const char* inheritedStyles[] = { "自动", "标准", "自然", "电影" };
     if (selectedPass == 0)
     {
         int style = (int) std::min(config->DlssNrStyle.value_or_default(), 2u);
-        if (ImGui::Combo("Style", &style, styles, IM_ARRAYSIZE(styles)))
+        if (ImGui::Combo("风格", &style, styles, IM_ARRAYSIZE(styles)))
             config->DlssNrStyle = (uint32_t) style;
         tuning(config->DlssNrIntensity, config->DlssNrLocalStructure, config->DlssNrLocalTone,
                config->DlssNrSkinStructure, config->DlssNrAutoMask);
@@ -343,7 +343,7 @@ void RenderModel(Config* config)
     {
         auto& pass = config->DlssNrPassOverrides[selectedPass - 1];
         int style = pass.style.has_value() ? std::clamp((int) pass.style.value(), 0, 2) + 1 : 0;
-        if (ImGui::Combo("Style", &style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles)))
+        if (ImGui::Combo("风格", &style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles)))
             pass.style = style ? std::optional<uint32_t>(style - 1) : std::nullopt;
         tuning(pass.intensity, pass.structure, pass.tone, pass.skin, pass.autoMask);
     }
@@ -353,44 +353,44 @@ void RenderModel(Config* config)
 void RenderBlend(Config* config)
 {
     if (config->DlssNrResidualAcrossRr.value_or_default())
-        Slider("History confidence threshold", config->DlssNrResidualConfidenceSensitivity, 0.0f, 2.0f, "%.3f", 0.0f);
+        Slider("历史置信度阈值", config->DlssNrResidualConfidenceSensitivity, 0.0f, 2.0f, "%.3f", 0.0f);
     if (config->DlssNrFinishedPicture.value_or_default() &&
         (config->DlssNrRunBeforeSr.value_or_default() || config->DlssNrDeferredDlss.value_or_default()))
     {
         const auto feature = State::Instance().currentFeature;
         ImGui::BeginDisabled(State::Instance().swapchainApi == API::Vulkan ||
                              (feature && feature->GetUpscalerType() == Upscaler::DLSSD));
-        Checkbox("Match HDR brightness response (experimental)", config->DlssNrHdrTransfer);
+        Checkbox("匹配HDR亮度响应（实验）", config->DlssNrHdrTransfer);
         ImGui::EndDisabled();
         HelpMarker(
-            "Match early NR brightness changes to the finished HDR image. Adds GPU work; unreliable fits fall back.");
+            "将早期NR亮度变化匹配到最终HDR图像。增加GPU开销；拟合不可靠时回退。");
     }
-    Slider("Detail strength", config->DlssNrTransferStrength, 0.0f, 2.0f, "%.2f", 1.0f);
-    HelpMarker("0 = no detail change. 1 = normal.");
+    Slider("细节强度", config->DlssNrTransferStrength, 0.0f, 2.0f, "%.2f", 1.0f);
+    HelpMarker("0=无细节变化。1=正常。");
 
-    Slider("Colour strength", config->DlssNrColourStrength, 0.0f, 4.0f, "%.2f", 1.0f);
-    HelpMarker("0 = game colours. 1 = model colours. Above 1 boosts saturation.");
+    Slider("色彩强度", config->DlssNrColourStrength, 0.0f, 4.0f, "%.2f", 1.0f);
+    HelpMarker("0=游戏色彩。1=模型色彩。大于1提高饱和度。");
 
-    if (ImGui::TreeNode("Skin and environment (final edit)"))
+    if (ImGui::TreeNode("皮肤与环境（最终调整）"))
     {
-        Checkbox("Separate skin / environment controls", config->DlssNrSkinProtection);
+        Checkbox("分离皮肤/环境控制", config->DlssNrSkinProtection);
         ImGui::BeginDisabled(!config->DlssNrSkinProtection.value_or_default());
         const auto slider = [](const char* label, auto& option)
         {
             Slider(label, option, 0.0f, 1.0f);
-            HelpMarker("0 = unchanged. 1 = full effect.");
+            HelpMarker("0=不变。1=全效。");
         };
-        slider("Skin detail / lighting", config->DlssNrSkinDetail);
-        slider("Skin colour", config->DlssNrSkinColour);
-        slider("Environment detail / lighting", config->DlssNrEnvironmentDetail);
-        slider("Environment colour", config->DlssNrEnvironmentColour);
-        Checkbox("Preview colour-based mask", config->DlssNrShowSkinMask);
+        slider("皮肤细节/光照", config->DlssNrSkinDetail);
+        slider("皮肤色彩", config->DlssNrSkinColour);
+        slider("环境细节/光照", config->DlssNrEnvironmentDetail);
+        slider("环境色彩", config->DlssNrEnvironmentColour);
+        Checkbox("预览基于色彩的遮罩", config->DlssNrShowSkinMask);
         ImGui::EndDisabled();
         ImGui::TreePop();
     }
 
-    Slider("Highlight guard", config->DlssNrMaxRatio, 1.0f, 8.0f, "%.1fx", 2.0f);
-    HelpMarker("Limit pixel brightening and darkening.");
+    Slider("高光限幅", config->DlssNrMaxRatio, 1.0f, 8.0f, "%.1fx", 2.0f);
+    HelpMarker("限制像素变亮与变暗幅度。");
 }
 
 void RenderInspect(Config* config)
@@ -400,45 +400,44 @@ void RenderInspect(Config* config)
         config->DlssNrResidualAcrossRr.value_or_default(), config->DlssNrFinishedPicture.value_or_default());
     if (placement.deferred && (config->DlssNrCompare.value_or_default() || config->DlssNrDebugView.value_or_default() ||
                                config->DlssNrShowSkinMask.value_or_default()))
-        ImGui::TextWrapped("Compare, debug view and skin-mask inspection suspend the separate edit-upscale path.");
-    Checkbox("Hold frame", config->DlssNrHoldFrame);
+        ImGui::TextWrapped("对比、调试视图与皮肤遮罩检查会暂停独立编辑放大路径。");
+    Checkbox("冻结帧", config->DlssNrHoldFrame);
     HelpMarker(
-        "Freeze a frame for NR tuning. Later game effects may update; temporal behaviour is not representative.");
+        "冻结一帧以调节NR。游戏后续特效仍可能更新；此时时间行为不具代表性。");
 
-    static const char* compareNames[] = { "Off", "Side by side", "Wipe" };
+    static const char* compareNames[] = { "关闭", "并排", "擦除" };
     int compare = (int) config->DlssNrCompare.value_or_default();
-    if (ImGui::Combo("Compare", &compare, compareNames, IM_ARRAYSIZE(compareNames)))
+    if (ImGui::Combo("对比", &compare, compareNames, IM_ARRAYSIZE(compareNames)))
         config->DlssNrCompare = (uint32_t) compare;
 
-    HelpMarker("Compare the original and NR output.");
+    HelpMarker("对比原始画面与NR输出。");
 
     if (compare != 0)
     {
-        Checkbox("Swap sides", config->DlssNrCompareSwap);
-        Checkbox("Label the sides", config->DlssNrCompareTags);
+        Checkbox("交换两侧", config->DlssNrCompareSwap);
+        Checkbox("标注两侧", config->DlssNrCompareTags);
         if (config->DlssNrCompareTags.value_or_default())
-            Slider("Label size", config->DlssNrTagScale, 0.5f, 5.0f, "%.1fx", {}, ImGuiSliderFlags_AlwaysClamp);
+            Slider("标注大小", config->DlssNrTagScale, 0.5f, 5.0f, "%.1fx", {}, ImGuiSliderFlags_AlwaysClamp);
     }
 
     if (compare == 1)
     {
-        Slider("Zoom", config->DlssNrCompareZoom, 1.0f, 2.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
-        HelpMarker("1 = fit. 2 = crop and enlarge.");
+        Slider("缩放", config->DlssNrCompareZoom, 1.0f, 2.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
+        HelpMarker("1=适配。2=裁剪放大。");
     }
 
     if (compare == 2)
     {
-        Slider("Split", config->DlssNrCompareSplit, 0.0f, 1.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
-        HelpMarker("Move the comparison boundary.");
+        Slider("分割", config->DlssNrCompareSplit, 0.0f, 1.0f, "%.2f", {}, ImGuiSliderFlags_AlwaysClamp);
+        HelpMarker("移动对比分界线。");
     }
 
-    static const char* debugNames[] = { "Off", "Proxy (what the model sees)", "Model output (raw)",
-                                        "Difference (amplified)", "Compressed model input" };
+    static const char* debugNames[] = { "关闭", "代理（模型所见）", "模型输出（原始）",
+                                        "差异（放大）", "压缩模型输入" };
     int debugView = (int) config->DlssNrDebugView.value_or_default();
-    if (ImGui::Combo("Debug view", &debugView, debugNames, IM_ARRAYSIZE(debugNames)))
+    if (ImGui::Combo("调试视图", &debugView, debugNames, IM_ARRAYSIZE(debugNames)))
         config->DlssNrDebugView = (uint32_t) debugView;
 
-    HelpMarker("Difference is amplified 20x. Grey means unchanged. Proxy and raw model output use unpacked geometry. "
-               "Compressed model input shows the input before unpacking, scaled to fill the screen.");
+    HelpMarker("差异放大20倍。灰色表示无变化。代理与原始模型输出使用解包几何。压缩模型输入显示解包前输入并铺满屏幕。");
 }
 } // namespace DlssNr::MenuSections

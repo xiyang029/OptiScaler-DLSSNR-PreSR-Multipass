@@ -32,8 +32,8 @@ static void RenderSpatialOutlines()
     {
         const ImVec2 lo { bounds.left * screen.x, bounds.top * screen.y };
         const ImVec2 hi { bounds.right * screen.x, bounds.bottom * screen.y };
-        draw->AddRect(lo, hi, IM_COL32(0, 0, 0, 220), 0, 0, 4.0f);
-        draw->AddRect(lo, hi, color, 0, 0, 2.0f);
+        draw->AddRect(lo, hi, IM_COL32(0, 0, 0, 220), 8.0f, 0, 4.0f);
+        draw->AddRect(lo, hi, color, 8.0f, 0, 2.0f);
     };
     if (config.DlssNrSpatialShowWork.value_or_default())
         rectangle(layout.workBounds, IM_COL32(255, 115, 0, 255));
@@ -64,8 +64,8 @@ void RenderNrCompareTags()
 
     // The left side is the untouched frame unless swapped -- matching the shader's
     // showOriginal = (uv.x < split) != swap.
-    const char* leftText = swap ? "DLSS NR : ON" : "DLSS NR : OFF";
-    const char* rightText = swap ? "DLSS NR : OFF" : "DLSS NR : ON";
+    const char* leftText = swap ? "DLSS NR：开启" : "DLSS NR：关闭";
+    const char* rightText = swap ? "DLSS NR：关闭" : "DLSS NR：开启";
 
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImFont* font = ImGui::GetFont();
@@ -84,8 +84,17 @@ void RenderNrCompareTags()
         float y = std::min(margin, screen.y - size.y - margin);
         y = std::max(y, 0.0f);
 
+        // 圆角药丸底加阴影，Fluent2 风格
+        const float padX = 10.0f * scale;
+        const float padY = 6.0f * scale;
+        const ImVec2 bgMin(x - padX, y - padY);
+        const ImVec2 bgMax(x + size.x + padX, y + size.y + padY);
+        const float pillRounding = (bgMax.y - bgMin.y) * 0.5f;
+
         dl->PushClipRect(clipMin, clipMax, true);
-        dl->AddText(font, fontSize, ImVec2(x + 2.0f, y + 2.0f), IM_COL32(0, 0, 0, 210), text);
+        dl->AddRectFilled(ImVec2(bgMin.x + 2.0f, bgMin.y + 2.0f), ImVec2(bgMax.x + 2.0f, bgMax.y + 2.0f),
+                          IM_COL32(0, 0, 0, 130), pillRounding);
+        dl->AddRectFilled(bgMin, bgMax, IM_COL32(22, 22, 24, 215), pillRounding);
         dl->AddText(font, fontSize, ImVec2(x, y), IM_COL32(255, 255, 255, 255), text);
         dl->PopClipRect();
     };
