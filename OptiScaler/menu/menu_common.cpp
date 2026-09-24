@@ -3113,7 +3113,7 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 
             ImGui::SameLine(0.0f, 6.0f);
 
-            if (ImGui::Button("应用更改"))
+            if (ImGui::Button("应用更改##dlss_preset"))
             {
                 LOG_DEBUG("Applying DLSS/DLSSD preset override changes, preset index: {}",
                           comboPreset.value_or_default());
@@ -3698,7 +3698,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ShowHelpMarker("0 表示自动检测显示器刷新率");
 
-            if (ImGui::Button("应用目标"))
+            if (ImGui::Button("应用目标##dmfg_selection"))
             {
                 config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 StreamlineHooks::updateDlssgOptions();
@@ -3706,7 +3706,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::SameLine(0.0f, 16.0f);
 
-            if (ImGui::Button("重置目标"))
+            if (ImGui::Button("重置目标##dmfg_selection"))
             {
                 fpsTarget = 0.0f;
                 config->FGDLSSGFramerateTargetDMFG.reset();
@@ -3955,7 +3955,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::SameLine(0.0f, 6.0f);
 
-                if (ImGui::Button("切换 FG") && _ffxFGIndex != config->FfxFGIndex.value_or_default())
+                if (ImGui::Button("切换 FG##fsrfg_output") && _ffxFGIndex != config->FfxFGIndex.value_or_default())
                 {
                     config->FfxFGIndex = _ffxFGIndex;
                     state.fgChanged = true;
@@ -4468,14 +4468,14 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ShowHelpMarker("0 表示自动检测显示器刷新率");
 
-                if (ImGui::Button("应用目标"))
+                if (ImGui::Button("应用目标##dmfg_runtime"))
                 {
                     config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 }
 
                 ImGui::SameLine(0.0f, 16.0f);
 
-                if (ImGui::Button("重置目标"))
+                if (ImGui::Button("重置目标##dmfg_runtime"))
                 {
                     fpsTarget = 0.0f;
                     config->FGDLSSGFramerateTargetDMFG.reset();
@@ -5030,7 +5030,7 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                     ImGui::SameLine(0.0f, 6.0f);
 
-                    if (ImGui::Button("切换 FG") && _ffxFGIndex != config->FfxFGIndex.value_or_default())
+                    if (ImGui::Button("切换 FG##nvngx_replace") && _ffxFGIndex != config->FfxFGIndex.value_or_default())
                     {
                         config->FfxFGIndex = _ffxFGIndex;
                         state.fgChanged = true;
@@ -5988,7 +5988,7 @@ void MenuCommon::RenderActiveImageSettings(RenderMenuContext& ctx)
                                     _ssDownsampler != config->OutputScalingDownscaler.value_or_default();
 
                 ImGui::BeginDisabled(!applyEnabled);
-                if (ImGui::Button("应用更改"))
+                if (ImGui::Button("应用更改##output_scaling"))
                 {
                     config->OutputScalingEnabled = _ssEnabled;
                     config->OutputScalingMultiplier = _ssRatio;
