@@ -8,6 +8,7 @@
 #include <resource_tracking/ResTrack_dx12.h>
 
 #include <nvapi/fakenvapi.h>
+#include <proxies/XeFGPacing.h>
 
 #include <magic_enum.hpp>
 
@@ -934,7 +935,13 @@ bool XeFG_Dx12::Dispatch()
     switch (Config::Instance()->FTInput.value_or_default())
     {
     case FrameTimeSource::Input:
-        constData.frameRenderTime = (float) _ftDelta[fIndex];
+        // Ask the pacing first: _ftDelta is filled with lastFGFrameTime on this backend
+        // (Upscaler_Inputs_Dx12), i.e. the same self-referential present-to-present number
+        // under another name. Tried first it always wins and RenderTimeMs() is never reached.
+        // (Ported from Coldwood1026/OptiScalerDp4aUnlock c0ec7979)
+        constData.frameRenderTime = static_cast<float>(XeFGPacing::RenderTimeMs());
+        if (!(constData.frameRenderTime > 0.0f))
+            constData.frameRenderTime = (float) _ftDelta[fIndex];
         break;
 
     case FrameTimeSource::Opti:
@@ -945,6 +952,8 @@ bool XeFG_Dx12::Dispatch()
         constData.frameRenderTime = 0.0f;
         break;
     }
+
+    XeFGPacing::NoteFedFrameTime(constData.frameRenderTime);
 
     LOG_DEBUG("Reset: {}, Opti FT: {}, Source FT: {}, Set FT: {}, Opti Id: {}, Reflex Id: {}", _reset[fIndex],
               constData.frameRenderTime, _ftDelta[fIndex], constData.frameRenderTime, _frameCount,

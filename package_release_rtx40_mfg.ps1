@@ -1,0 +1,1 @@
+./package_release.ps1 -Version nr-rtx40-mfg -EnableRtx40Mfg

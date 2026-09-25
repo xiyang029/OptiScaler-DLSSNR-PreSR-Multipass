@@ -703,8 +703,17 @@ class Config
     CustomOptional<bool> FSRFGEnableWatermark { false };
 
     // XeFG
+    // Ceiling for the XeFG MFG path, in interpolations: 7 is an 8X multiplier.
+    // One number decides what the unlock patches report to the provider as
+    // maxSupportedInterpolations, what the menu offers, and what the ini may
+    // ask for. Ported from Coldwood1026/OptiScalerDp4aUnlock (U1-U5 + XeLL).
+    static constexpr int32_t XeFGMaxInterpolations = 7;
+
     CustomOptional<bool> FGXeFGIgnoreInitChecks { false };
     CustomOptional<int> FGXeFGInterpolationCount { 1 };
+    CustomOptional<bool> FGXeFGUnlockEnabled { true };
+    CustomOptional<int> FGXeFGMaxInterpolatedFrames { XeFGMaxInterpolations };
+    CustomOptional<bool> FGXeFGExtraPacing { true };
     CustomOptional<bool> FGXeFGUIComposition { false };
     CustomOptional<bool> FGXeFGDepthInverted { true };
     CustomOptional<bool> FGXeFGJitteredMV { false };
