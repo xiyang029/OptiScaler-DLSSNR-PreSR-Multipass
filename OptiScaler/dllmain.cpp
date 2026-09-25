@@ -1782,7 +1782,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         exeModule = GetModuleHandle(nullptr);
         processId = GetCurrentProcessId();
 
-        // Main Opti DLL path
+        // Main Opti DLL path (default: "OptiScaler" folder next to the OptiScaler DLL itself)
         if (!Config::Instance()->MainDllPath.has_value())
         {
             Config::Instance()->MainDllPath.set_volatile_value(L"OptiScaler");
@@ -1790,14 +1790,26 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         if (std::filesystem::path mainDllPath(Config::Instance()->MainDllPath.value()); mainDllPath.is_relative())
         {
-            Config::Instance()->MainDllPath.set_volatile_value(Util::ExePath().parent_path() / mainDllPath);
+            // Relative OptiDllPath is resolved against the OptiScaler DLL location,
+            // not the game exe folder.
+            auto dllBased = Util::DllPath().parent_path() / mainDllPath;
+            auto exeBased = Util::ExePath().parent_path() / mainDllPath;
+
+            // Prefer dll location, keep exe location as fallback for old installs
+            // where the dll sits next to the exe (both are equal there anyway).
+            if (std::filesystem::exists(dllBased) && std::filesystem::is_directory(dllBased))
+                Config::Instance()->MainDllPath.set_volatile_value(dllBased);
+            else if (std::filesystem::exists(exeBased) && std::filesystem::is_directory(exeBased))
+                Config::Instance()->MainDllPath.set_volatile_value(exeBased);
+            else
+                Config::Instance()->MainDllPath.set_volatile_value(dllBased);
         }
 
-        // If path is invalid or doesn't exist, use the exe folder as main
+        // If path is invalid or doesn't exist, use the dll folder as main
         if (!std::filesystem::exists(Config::Instance()->MainDllPath.value()) ||
             !std::filesystem::is_directory(Config::Instance()->MainDllPath.value()))
         {
-            Config::Instance()->MainDllPath.set_volatile_value(Util::ExePath().parent_path());
+            Config::Instance()->MainDllPath.set_volatile_value(Util::DllPath().parent_path());
         }
 
         // Clean up path
