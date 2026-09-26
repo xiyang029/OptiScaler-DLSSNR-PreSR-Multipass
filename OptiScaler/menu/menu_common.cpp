@@ -4660,21 +4660,21 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
     if (state.activeFgOutput == FGOutput::Reprojection && fgOutput)
     {
-        ImGui::SeparatorText("Reprojection");
+        ImGui::SeparatorText("重投影 (Reprojection)");
 
         if (fgOutput->IsActive())
         {
             auto reprojection = dynamic_cast<Reprojection_Dx12*>(fgOutput);
-            ImGui::Text("Updated camera position by: %.1fms",
+            ImGui::Text("相机位置提前更新：%.1fms",
                         (float) reprojection->GetLastTimeSinceSimStartNs() / 1'000'000.f);
         }
         else
         {
-            ImGui::TextDisabled("Not updating camera position");
+            ImGui::TextDisabled("未更新相机位置");
         }
 
         bool fgActive = config->FGEnabled.value_or_default();
-        if (ImGui::Checkbox("Active##2", &fgActive))
+        if (ImGui::Checkbox("启用##2", &fgActive))
         {
             config->FGEnabled = fgActive;
             LOG_DEBUG("Reprojection enabled: {}", fgActive);
@@ -4682,23 +4682,23 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             if (config->FGEnabled.value_or_default())
                 state.fgChanged = true;
         }
-        ShowHelpMarker("Enable reprojection");
+        ShowHelpMarker("启用重投影");
 
         ImGui::SameLine();
 
-        ImGui::Checkbox("Show static elements", &state.fgHudlessCompare);
-        ShowHelpMarker("For fine tuning the depth cutoff\n"
-                       "Shows UI and depth cutoff areas\n"
-                       "Adjust depth cutoff so that only stuff like your gun and hands are marked");
+        ImGui::Checkbox("显示静态元素", &state.fgHudlessCompare);
+        ShowHelpMarker("用于微调深度截断\n"
+                       "显示 UI 和深度截断区域\n"
+                       "调整截断值，让只有枪和手这类东西被标记");
 
         ImGui::Spacing();
 
         // clang-format off
         static std::vector<MenuOption<ReprojectionFill>> fillModes = {
-            { ReprojectionFill::StrechEdge, "Strech edge" },
-            { ReprojectionFill::Dithering, "Dithering" },
-            { ReprojectionFill::Noise, "Noise" },
-            { ReprojectionFill::Debug, "Debug" }
+            { ReprojectionFill::StrechEdge, "拉伸边缘" },
+            { ReprojectionFill::Dithering, "抖动" },
+            { ReprojectionFill::Noise, "噪点" },
+            { ReprojectionFill::Debug, "调试" }
         };
         // clang-format on
 
@@ -4706,26 +4706,26 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (!config->ReprojectionFillMode.has_value())
             config->ReprojectionFillMode = config->ReprojectionFillMode.value_or_default();
 
-        PopulateCombo("Edge fill mode", config->ReprojectionFillMode, fillModes);
-        ShowHelpMarker("You want either dither or noise\n"
-                       "Those two use the unprojected image as fill\n"
-                       "and then some blending on the edges to fool the eye");
+        PopulateCombo("边缘填充模式", config->ReprojectionFillMode, fillModes);
+        ShowHelpMarker("建议用抖动或噪点\n"
+                       "这两者用未投影的图像做填充\n"
+                       "再在边缘做混合来欺骗眼睛");
 
         float cutoff = config->ReprojectionDepthCutoff.value_or_default();
-        if (ImGui::SliderFloat("Depth cutoff", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+        if (ImGui::SliderFloat("深度截断", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
             config->ReprojectionDepthCutoff = cutoff;
-        ShowHelpMarker("Selects how many elements close to the camera\n"
-                       "should be shown over the reprojected image.\n"
-                       "This prevents your gun from being moved in weird ways.\n\n"
-                       "Use \"Show static elements\" to help you adjust it\n"
-                       "Unreal Engine games are usually around 0.10\n"
-                       "Cyberpunk is around 0.02");
+        ShowHelpMarker("选择有多少靠近相机的元素\n"
+                       "直接显示在重投影图像上。\n"
+                       "防止你的枪被奇怪地移动。\n\n"
+                       "用“显示静态元素”辅助调整\n"
+                       "UE 引擎游戏一般 0.10 左右\n"
+                       "赛博朋克 2077 一般 0.02");
 
         uint32_t cutoffExpandPx = config->ReprojectionCutoffExpand.value_or_default();
-        if (SliderUInt("Cutoff expand", &cutoffExpandPx, 0, 2))
+        if (SliderUInt("截断外扩", &cutoffExpandPx, 0, 2))
             config->ReprojectionCutoffExpand = cutoffExpandPx;
-        ShowHelpMarker("A toddler implemented this so it's super slow\n"
-                       "Use only when you see an outline left by the cutoff process");
+        ShowHelpMarker("实现比较粗糙，速度很慢\n"
+                       "仅在截断过程留下描边时使用");
     }
 
     // OptiFG
