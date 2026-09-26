@@ -4463,6 +4463,10 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         }
         ShowHelpMarker("启用 XeFG 调试视图");
 
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::Checkbox("仅生成帧", &state.fgOnlyGenerated);
+        ShowHelpMarker("启用 XeFG 仅生成帧调试功能");
+
         ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 16.0f);
