@@ -16,6 +16,8 @@
 
 #include <proxies/XeSS_Proxy.h>
 #include <proxies/XeFG_Proxy.h>
+#include <proxies/XeLL_Proxy.h>
+#include <proxies/XeFGPacing.h>
 #include <proxies/FfxApi_Proxy.h>
 #include <proxies/Streamline_Proxy.h>
 
@@ -1847,6 +1849,51 @@ void MenuCommon::UpdateFrameTimeAverages(RenderMenuContext& ctx)
     }
 }
 
+// XeLL end-to-end latency (simulation start -> present start), averaged over
+// the provider's last-64-frames report. This is CPU marker latency, NOT model
+// GPU time - but it is the number that answers "did latency optimization work".
+// Throttled to 2 Hz. Nullopt when XeLL recorded no usable markers (the game
+// sends none through) or the context is unavailable.
+static std::optional<double> PollXeLLEndToEndMs(double nowMs)
+{
+    static double lastPollMs = 0.0;
+    static std::optional<double> cached;
+
+    if (lastPollMs > 0.001 && nowMs - lastPollMs < 500.0)
+        return cached;
+
+    lastPollMs = nowMs;
+    cached.reset();
+
+    auto* fn = XeLLProxy::GetFramesReports();
+    void* ctx = fakenvapi::getCurrentContext();
+
+    if (fn == nullptr || ctx == nullptr)
+        return cached;
+
+    xell_frame_report_t reports[64] = {};
+
+    if (fn((xell_context_handle_t) ctx, reports) != XELL_RESULT_SUCCESS)
+        return cached;
+
+    double sum = 0.0;
+    int count = 0;
+
+    for (const auto& r : reports)
+    {
+        if (r.m_present_start_ts > r.m_sim_start_ts && r.m_sim_start_ts > 0)
+        {
+            sum += (r.m_present_start_ts - r.m_sim_start_ts) / 1000000.0;
+            count++;
+        }
+    }
+
+    if (count > 0)
+        cached = sum / count;
+
+    return cached;
+}
+
 // Labels for the comparison views.
 //
 void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
@@ -1977,6 +2024,7 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
             std::string firstLine = "";
             std::string secondLine = "";
             std::string thirdLine = "";
+            std::string fourthLine = "";
 
             auto fg = state.currentFG;
             auto fgText = (fg != nullptr && fg->IsActive() && !fg->IsPaused()) ? (" (" + std::string(fg->Name()) + ")")
@@ -2099,6 +2147,38 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                     StrFmt("超分耗时: %7.2f ms, 平均: %7.2f ms", state.upscaleTimes.back(), averageUpscalerFT);
             }
 
+            // Prepare Line 4: FG present-side timings. These are CPU cadence
+            // numbers, NOT model GPU time (neither provider exposes that):
+            // XeFG shows pacing rhythm + XeLL end-to-end latency, everything
+            // else shows the real Present CPU cost (Streamline interpolates
+            // inside that call for DLSSG; vsync block included).
+            if (config->FpsOverlayType.value_or_default() >= FpsOverlay_Full && fg != nullptr && fg->IsActive() &&
+                !fg->IsPaused())
+            {
+                if (state.activeFgOutput == FGOutput::XeFG)
+                {
+                    const auto pace = XeFGPacing::GetStatsSnapshot();
+
+                    if (pace.live && pace.multiplier > 0)
+                    {
+                        fourthLine = StrFmt("XeFG pacing %lldx: 间隔 %5.2f ms, 实测 %5.2f ms",
+                                            pace.multiplier, pace.intervalMs, pace.gapAvgMs);
+                    }
+
+                    if (auto xellMs = PollXeLLEndToEndMs(now); xellMs.has_value())
+                    {
+                        fourthLine += StrFmt("%sXeLL 采样→呈现 %5.2f ms", fourthLine.empty() ? "" : " | ",
+                                             xellMs.value());
+                    }
+                }
+                else if (!state.fgPresentTimes.empty())
+                {
+                    const char* fgTag = state.activeFgOutput == FGOutput::DLSSG ? "DLSSG" : "FG";
+                    fourthLine = StrFmt("%s present CPU: %5.2f ms (含vsync)", fgTag,
+                                        (double) state.fgPresentTimes.back());
+                }
+            }
+
             ImVec2 plotSize;
             if (config->FpsOverlayHorizontal.value_or_default())
             {
@@ -2110,12 +2190,19 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 auto firstSize = ImGui::CalcTextSize(firstLine.c_str());
                 auto secondSize = ImGui::CalcTextSize(secondLine.c_str());
                 auto thirdSize = ImGui::CalcTextSize(thirdLine.c_str());
+                auto fourthSize = ImGui::CalcTextSize(fourthLine.c_str());
                 auto textWidth = 0.0f;
 
                 if (firstSize.x > secondSize.x)
-                    textWidth = firstSize.x > thirdSize.x ? firstSize.x : thirdSize.x;
+                    textWidth = firstSize.x;
                 else
-                    textWidth = secondSize.x > thirdSize.x ? secondSize.x : thirdSize.x;
+                    textWidth = secondSize.x;
+
+                if (thirdSize.x > textWidth)
+                    textWidth = thirdSize.x;
+
+                if (fourthSize.x > textWidth)
+                    textWidth = fourthSize.x;
 
                 auto minWidth = fpsScale * 300.0f;
                 auto plotWidth = textWidth < minWidth ? minWidth : textWidth;
@@ -2168,6 +2255,22 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                 }
 
                 ImGui::Text(thirdLine.c_str());
+
+                if (!fourthLine.empty())
+                {
+                    if (config->FpsOverlayHorizontal.value_or_default())
+                    {
+                        ImGui::SameLine(0.0f, 0.0f);
+                        ImGui::Text(" | ");
+                        ImGui::SameLine(0.0f, 0.0f);
+                    }
+                    else
+                    {
+                        ImGui::Spacing();
+                    }
+
+                    ImGui::Text(fourthLine.c_str());
+                }
             }
 
             if (config->FpsOverlayType.value_or_default() >= FpsOverlay_FullGraph)
@@ -4254,6 +4357,10 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         auto maxInterpolationCount = fgOutput->GetMaxInterpolationCount();
 
+        // The policy owns the count while AutoMFG is on; the manual combo would
+        // fight it, so it goes read-only (it still shows the live count).
+        ImGui::BeginDisabled(config->FGXeFGAutoMFG.value_or_default());
+
         if (maxInterpolationCount > 1)
         {
             ImGui::SameLine(0.0f, 16.0f);
@@ -4273,7 +4380,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                     if (ImGui::Selectable(modeStr.c_str(), (currentSet == i)))
                     {
                         LOG_DEBUG("XeFG Interpolation Count set to: {}", i + 1);
-                        state.fgChanged = true;
+                        // No fgChanged: the smooth switch in Dispatch applies
+                        // the new count without the 10-frame toggle pause.
                         config->FGXeFGInterpolationCount = i + 1;
                     }
                 }
@@ -4284,6 +4392,40 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ImGui::PopItemWidth();
 
             ShowHelpMarker("设置 XeFG 插值数");
+        }
+
+        ImGui::EndDisabled();
+
+        bool autoMfg = config->FGXeFGAutoMFG.value_or_default();
+        if (ImGui::Checkbox("动态多帧", &autoMfg))
+            config->FGXeFGAutoMFG = autoMfg;
+
+        ShowHelpMarker("按输出帧数自动升降倍数\n"
+                       "输出不够就升，基帧恶化或输出超标就降\n"
+                       "快降慢升，带迟滞防振荡\n\n"
+                       "切换无暂停（失败才回退暂停路径）");
+
+        if (autoMfg)
+        {
+            int targetFps = config->FGXeFGAutoMFGTargetFps.value_or_default();
+            ImGui::PushItemWidth(140.0f * menuResScale);
+            if (ImGui::SliderInt("目标输出fps", &targetFps, 30, 480))
+                config->FGXeFGAutoMFGTargetFps = targetFps;
+            ImGui::PopItemWidth();
+            ShowHelpMarker("输出fps目标 = 基帧 x (插值数+1)\n"
+                           "不够就升档，超标 1.5 倍就降档省 GPU");
+
+            // Degenerate provider max (<= 1X) has no range to bound: hide the slider.
+            if (maxInterpolationCount > 1)
+            {
+                int minFrames = config->FGXeFGAutoMFGMinFrames.value_or_default();
+                ImGui::PushItemWidth(140.0f * menuResScale);
+                if (ImGui::SliderInt("最低插值数", &minFrames, 1, maxInterpolationCount))
+                    config->FGXeFGAutoMFGMinFrames = minFrames;
+                ImGui::PopItemWidth();
+                ShowHelpMarker("动态范围下限\n"
+                               "上限复用 MaxInterpolatedFrames");
+            }
         }
 
         ImGui::SameLine(0.0f, 16.0f);
@@ -4322,6 +4464,16 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
                        "分辨率设为显示器分辨率\n"
                        "可能导致一些不稳定。\n\n"
                        "需重启游戏才生效！");
+
+        ImGui::SameLine(0.0f, 16.0f);
+        bool fgAutoReset = config->FGXeFGAutoReset.value_or_default();
+        if (ImGui::Checkbox("自动重置历史", &fgAutoReset))
+            config->FGXeFGAutoReset = fgAutoReset;
+
+        ShowHelpMarker("FG 重启与镜头切变时自动重置历史\n\n"
+                       "防止旧场景残影糊到新场景上\n"
+                       "(传送/过场闪烁)\n\n"
+                       "关闭则只信游戏的重置信号");
 
         // Disable this for now
         // ImGui::SameLine(0.0f, 16.0f);

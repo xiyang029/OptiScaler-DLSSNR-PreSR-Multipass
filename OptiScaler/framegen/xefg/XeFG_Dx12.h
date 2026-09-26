@@ -25,6 +25,39 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     std::optional<bool> _haveHudless = std::nullopt;
     bool _uiComposition = false;
 
+    // Last frameRenderTime fed to the provider. Used to slew-limit upward
+    // steps and break the measured-period feedback loop (see Dispatch).
+    float _lastFedFrameTimeMs = 0.0f;
+
+    // Consecutive starved Presents (no NewFrame within the watchdog window).
+    // A single hitch skews present IDs without meaning starvation.
+    uint32_t _presentStarveCount = 0;
+
+    // One-shot history reset consumed by the next Dispatch. Set on Activate
+    // (stale history from before the pause must not seed new bursts) and on
+    // camera-cut detection (see Dispatch). Reset frames cost no presents and
+    // no latency: only the interpolated content of that burst goes history-free.
+    bool _forceResetNext = false;
+
+    // Previous view matrix for camera-cut detection, with validity flag.
+    float _prevViewMatrix[16] = {};
+    bool _hasPrevViewMatrix = false;
+
+    // Dynamic MFG policy state: base-frame budget accumulator over the eval
+    // window, consecutive up-votes for hysteresis (fast down, slow up), and
+    // the base frame time recorded at the last step-up (climbing stops if it
+    // degrades the base frame by more than 20%).
+    double _autoMfgAccumMs = 0.0;
+    uint32_t _autoMfgSamples = 0;
+    uint32_t _autoMfgUpVotes = 0;
+    double _autoMfgBaseAtStepMs = 0.0;
+
+    // Frame-time budget policy: returns the wanted interpolation count.
+    int EvaluateAutoMFG(int fIndex);
+    // Runtime count switch without the 10-frame toggle pause. On provider
+    // error falls back to the legacy WAR toggle path.
+    void ApplyInterpolationCountSmooth(int count);
+
     std::unique_ptr<DI_Dx12> _depthInvert;
 
     static void xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData);

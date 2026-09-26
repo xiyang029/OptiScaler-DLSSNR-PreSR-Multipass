@@ -318,6 +318,11 @@ class State
     // Framegraph
     std::deque<double> upscaleTimes;
     std::deque<double> frameTimes;
+    // CPU wall time of the real swapchain Present while FG is active, in ms.
+    // For DLSSG this wraps the Streamline present (interpolation included);
+    // for XeFG the burst cost lives in XeFGPacing stats instead. Filtered and
+    // maintained exactly like upscaleTimes.
+    std::deque<double> fgPresentTimes;
     std::vector<DetailedGpuTime> detailedGpuTimes;
     double lastFGFrameTime = 0.0;
     double presentFrameTime = 0.0;

@@ -56,6 +56,56 @@ static ID3D12Fence* resizeFence = nullptr;
 static UINT64 resizeFenceValue = 0;
 static HANDLE resizeFenceEvent = nullptr;
 
+// Records the CPU wall time of the real Present while FG is active, so the
+// overlay can show FG present-side cost (Streamline interpolates inside that
+// call for DLSSG). Same <100 ms filter as upscaler times; any vsync block is
+// included, hence the label in the overlay says so.
+static void PushFgPresentMs(double ms)
+{
+    if (ms >= 100.0)
+        return;
+
+    State::Instance().frameTimeMutex.lock();
+    State::Instance().fgPresentTimes.push_back(ms);
+    State::Instance().fgPresentTimes.pop_front();
+    State::Instance().frameTimeMutex.unlock();
+}
+
+static bool ShouldTimeFgPresent(bool willPresent)
+{
+    if (!willPresent)
+        return false;
+
+    auto fg = State::Instance().currentFG;
+    return fg != nullptr && fg->IsActive() && !fg->IsPaused();
+}
+
+struct FgPresentTimer
+{
+    bool active = false;
+    LARGE_INTEGER freq {};
+    LARGE_INTEGER start {};
+
+    explicit FgPresentTimer(bool enable) : active(enable)
+    {
+        if (active)
+        {
+            QueryPerformanceFrequency(&freq);
+            QueryPerformanceCounter(&start);
+        }
+    }
+
+    ~FgPresentTimer()
+    {
+        if (!active || freq.QuadPart <= 0)
+            return;
+
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        PushFgPresentMs((end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart);
+    }
+};
+
 static void UpdateOutputColorSpace(DXGI_COLOR_SPACE_TYPE colorSpace)
 {
     auto& state = State::Instance();
@@ -465,10 +515,14 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
     // DXVK check, it's here because of upscaler time calculations
     if (IdentifyGpu::getPrimaryGpu().usesDxvk)
     {
-        if (pPresentParameters == nullptr)
-            presentResult = pSwapChain->Present(SyncInterval, Flags);
-        else
-            presentResult = ((IDXGISwapChain1*) pSwapChain)->Present1(SyncInterval, Flags, pPresentParameters);
+        {
+            FgPresentTimer fgTimer(ShouldTimeFgPresent(willPresent));
+
+            if (pPresentParameters == nullptr)
+                presentResult = pSwapChain->Present(SyncInterval, Flags);
+            else
+                presentResult = ((IDXGISwapChain1*) pSwapChain)->Present1(SyncInterval, Flags, pPresentParameters);
+        }
 
         if (presentResult == S_OK)
         {
@@ -560,11 +614,15 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT 
 
     LOG_DEBUG("Calling original present");
 
-    // swapchain present
-    if (pPresentParameters == nullptr)
-        presentResult = pSwapChain->Present(SyncInterval, Flags);
-    else
-        presentResult = ((IDXGISwapChain1*) pSwapChain)->Present1(SyncInterval, Flags, pPresentParameters);
+    {
+        FgPresentTimer fgTimer(ShouldTimeFgPresent(willPresent));
+
+        // swapchain present
+        if (pPresentParameters == nullptr)
+            presentResult = pSwapChain->Present(SyncInterval, Flags);
+        else
+            presentResult = ((IDXGISwapChain1*) pSwapChain)->Present1(SyncInterval, Flags, pPresentParameters);
+    }
 
     if (presentResult == S_OK)
     {

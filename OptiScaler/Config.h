@@ -720,6 +720,14 @@ class Config
     CustomOptional<bool> FGXeFGHighResMV { false };
     CustomOptional<bool> FGXeFGDebugView { false };
     CustomOptional<bool> FGXeFGForceBorderless { false };
+    // Auto history reset on (re)activation and camera cuts. Off = trust the
+    // game's reset signal only.
+    CustomOptional<bool> FGXeFGAutoReset { true };
+    // Dynamic MFG: the output-fps policy drives SetNumInterpolatedFrames
+    // instead of a fixed count. Off = static InterpolationCount.
+    CustomOptional<bool> FGXeFGAutoMFG { false };
+    CustomOptional<int> FGXeFGAutoMFGTargetFps { 120 };
+    CustomOptional<int> FGXeFGAutoMFGMinFrames { 1 };
 
     // DLSSG
 #if defined(OPTISCALER_RTX40_MFG)

@@ -520,20 +520,26 @@ inline double RenderTimeMs() { return g_renderTimeNs > 0 ? g_renderTimeNs / 1000
 
 inline void NoteFedFrameTime(double ms) { g_fedFrameTimeMs = ms; }
 
-// The provider runs this on the swapchain present thread, so the wait has to
-// be cheap and must not overshoot by much. Sleep(1) is deliberately avoided:
-// its granularity is a full timer tick, which is coarser than the interval
-// we are trying to hit.
+// The provider runs this on the swapchain present thread, so the tail of the
+// wait has to be cheap and must not overshoot by much. Far out (>4 ms) a
+// 1 ms sleep yields the CPU and lowers contention (better 1% low); inside
+// 4 ms it falls back to Sleep(0), inside 200 us to a pure Yield spin so the
+// final edge still lands precisely.
 inline void WaitUntil(int64_t targetQpc)
 {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
 
-    const int64_t yieldBelow = QpcFromNs(200000); // 200 us
+    const int64_t sleepBelow = QpcFromNs(4000000); // 4 ms
+    const int64_t yieldBelow = QpcFromNs(200000);  // 200 us
 
     while (now.QuadPart < targetQpc)
     {
-        if ((targetQpc - now.QuadPart) > yieldBelow)
+        const int64_t remaining = targetQpc - now.QuadPart;
+
+        if (remaining > sleepBelow)
+            Sleep(1);
+        else if (remaining > yieldBelow)
             Sleep(0);
         else
             YieldProcessor();
@@ -582,12 +588,16 @@ inline void PaceFrame(uint64_t index, uint64_t count)
         g_targetQpc += g_intervalQpc;
     }
 
-    // If a hitch has already put us a whole frame behind, give up on this
-    // burst rather than stalling the present thread trying to catch up.
-    const int64_t latest = now.QuadPart + QpcFromNs(g_periodNs);
+    // If a hitch has already put us a whole frame behind, drop the catch-up:
+    // re-anchor to one interval from now instead of stalling the present
+    // thread (lower latency) or clumping the rest of the burst (worse 1% low).
+    if (g_periodNs > 0 && g_intervalQpc > 0)
+    {
+        const int64_t latest = now.QuadPart + QpcFromNs(g_periodNs);
 
-    if (g_targetQpc > latest)
-        g_targetQpc = latest;
+        if (g_targetQpc > latest)
+            g_targetQpc = now.QuadPart + g_intervalQpc;
+    }
 
     // Hold the wall clock line the provider already worked out for this
     // burst. Nothing else - see the note at the top of the file for why the
@@ -615,10 +625,14 @@ inline void PaceFrame(uint64_t index, uint64_t count)
 //
 // 2X never reaches here: count is 1, the loop runs 1..0 and does not
 // execute, and the caller leaves the last frame to the provider.
-inline void ScheduleFrame(void* ctx, uint8_t* burst, uint64_t index)
+//
+// Returns whether the provider actually scheduled the frame. A refused call
+// is a silent no-op (its gate said no), so the caller falls back to the wall
+// clock for that frame instead of leaving it unpaced.
+inline bool ScheduleFrame(void* ctx, uint8_t* burst, uint64_t index)
 {
     if (g_schedNative == nullptr || g_ringSnapshot == nullptr)
-        return;
+        return false;
 
     g_ring = reinterpret_cast<uint8_t*>(ctx) + RingOffset;
 
@@ -667,6 +681,8 @@ inline void ScheduleFrame(void* ctx, uint8_t* burst, uint64_t index)
     }
 
     RecordGap(after.QuadPart);
+
+    return scheduled;
 }
 
 // The provider's limiter already holds the burst's last frame back under
@@ -715,8 +731,9 @@ inline void TryPace(void* ctx, void* arg5, void* arg6, uint64_t arg7, bool isLas
     auto* burst = reinterpret_cast<uint8_t*>(arg5) - 0x38;
     const uint64_t count = *reinterpret_cast<uint64_t*>(burst + 8);
 
-    // The provider caps the multiplier at 6X, so count = 5 is the ceiling.
-    if (count < 1 || count > 5)
+    // Unlocked ceiling follows [XeFG] MaxInterpolatedFrames (7 = 8X).
+    // Anything above it is not a burst this hook understands.
+    if (count < 1 || count > static_cast<uint64_t>(Config::XeFGMaxInterpolations))
         return;
 
     g_lastMultiplier = static_cast<int64_t>(count) + 1;
@@ -754,10 +771,16 @@ inline void TryPace(void* ctx, void* arg5, void* arg6, uint64_t arg7, bool isLas
     // it would refuse, the wall clock paces instead of us paying for nothing.
     if (g_schedNative != nullptr && SchedulerUsable(ctx))
     {
-        if (!isLast)
-            ScheduleFrame(ctx, burst, index);
+        // The last frame is left alone: the provider's own call at 0x220411
+        // is already doing it, and doing it twice would put two timestamps
+        // on one frame.
+        if (isLast)
+            return;
 
-        return;
+        // A refused schedule is a silent no-op - fall through to the wall
+        // clock so the frame still gets paced instead of going out raw.
+        if (ScheduleFrame(ctx, burst, index))
+            return;
     }
 
     // Wall clock. The provider holds the last frame back under its own
@@ -808,8 +831,10 @@ inline void* TsDetour(void* a1, int64_t* out, void* lookup, void* timing, uint32
     void* const result = g_tsNative(a1, out, lookup, timing, index, countPlus1);
 
     // index 0 is the real frame and never reaches the provider's tail; the
-    // provider caps the multiplier at 6X, so index 5 is the ceiling.
-    if (out == nullptr || timing == nullptr || index == 0 || index > 5 || countPlus1 < 2)
+    // ceiling follows [XeFG] MaxInterpolatedFrames (7 = 8X).
+    if (out == nullptr || timing == nullptr || index == 0 ||
+        index > static_cast<uint32_t>(Config::XeFGMaxInterpolations) || countPlus1 < 2 ||
+        countPlus1 > static_cast<uint32_t>(Config::XeFGMaxInterpolations + 1))
         return result;
 
     const int64_t median = *reinterpret_cast<const int64_t*>(reinterpret_cast<const uint8_t*>(timing) + 8);
@@ -1018,5 +1043,37 @@ inline bool Install(uint8_t* base)
         g_tsNative = nullptr;
 
     return true;
+}
+
+// Live snapshot for the FPS overlay. Reads only; safe from any thread.
+// `live` is false until a full real frame period has been measured.
+struct StatsSnapshot
+{
+    bool live = false;
+    int64_t multiplier = 0;
+    double periodMs = 0.0;
+    double intervalMs = 0.0;
+    double gapAvgMs = 0.0;
+    double fedMs = 0.0;
+};
+
+inline StatsSnapshot GetStatsSnapshot()
+{
+    StatsSnapshot s;
+
+    if (!g_enabled || g_freq.QuadPart <= 0 || g_periodNs <= 0)
+        return s;
+
+    s.live = true;
+    s.multiplier = g_lastMultiplier;
+    s.periodMs = g_periodNs / 1000000.0;
+    s.intervalMs = MsFromQpc(g_intervalQpc);
+
+    if (g_gapCount > 0)
+        s.gapAvgMs = MsFromQpc(g_gapSumQpc / g_gapCount);
+
+    s.fedMs = g_fedFrameTimeMs;
+
+    return s;
 }
 } // namespace XeFGPacing
