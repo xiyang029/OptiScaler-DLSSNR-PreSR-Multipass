@@ -1,23 +1,12 @@
 #pragma once
 
 #include <framegen/IFGFeature_Dx12.h>
+#include <shaders/reproject/Reproject_Dx12.h>
 
-#include <proxies/Streamline_Proxy.h>
-
-class DLSSG_Dx12 : public virtual IFGFeature_Dx12
+class Reprojection_Dx12 : public virtual IFGFeature_Dx12
 {
-  private:
-    uint32_t _width = 0;
-    uint32_t _height = 0;
-    std::optional<bool> _haveHudless = std::nullopt;
-
-    sl::ViewportHandle viewport { 0 };
-    sl::FrameToken* frameToken = nullptr;
-
-    ID3D12Fence* dlssgFence[BUFFER_COUNT] = {};
-    UINT64 lastOptionFrame = 0;
-
-    bool Dispatch();
+    std::unique_ptr<Reproject_Dx12> _reproject;
+    std::atomic<uint64_t> timeSinceSimStart;
 
   protected:
     void ReleaseObjects() override final;
@@ -25,9 +14,9 @@ class DLSSG_Dx12 : public virtual IFGFeature_Dx12
 
   public:
     // IFGFeature
-    const char* Name() override final { return "DLSSG"; };
-    feature_version Version() override final;
-    HWND Hwnd() override final;
+    const char* Name() override final { return "Reprojection"; };
+    feature_version Version() override final { return { 0, 0, 1 }; };
+    HWND Hwnd() override final { return _hwnd; };
 
     // IFGFeature_Dx12
     bool CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue, DXGI_SWAP_CHAIN_DESC* desc,
@@ -54,20 +43,14 @@ class DLSSG_Dx12 : public virtual IFGFeature_Dx12
     void* FrameGenerationContext() override final;
     void* SwapchainContext() override final;
 
-    DLSSG_Dx12() : IFGFeature_Dx12(), IFGFeature()
-    {
-        if (StreamlineProxy::Module() == nullptr)
-            StreamlineProxy::LoadStreamline();
+    std::optional<double> ReadGpuTime(void* commandQueue) override final;
 
-        if (StreamlineProxy::Module() != nullptr && !StreamlineProxy::IsD3D12Inited() &&
-            State::Instance().currentD3D12Device != nullptr)
-        {
-            StreamlineProxy::InitWithD3D12(State::Instance().currentD3D12Device);
-        }
-    }
+    Reprojection_Dx12() : IFGFeature_Dx12(), IFGFeature() { _framesToInterpolate = 0; }
 
-    ~DLSSG_Dx12();
+    ~Reprojection_Dx12() {};
 
     // Inherited via IFGFeature_Dx12
-    bool SetInterpolatedFrameCount(UINT interpolatedFrameCount) override;
+    bool SetInterpolatedFrameCount(UINT interpolatedFrameCount) override { return true; };
+
+    uint64_t GetLastTimeSinceSimStartNs() { return timeSinceSimStart; };
 };

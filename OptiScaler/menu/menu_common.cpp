@@ -22,6 +22,7 @@
 #include <proxies/Streamline_Proxy.h>
 
 #include <framegen/nvngx/Nvngx_FG.h>
+#include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <nvapi/fakenvapi.h>
 #include <hooks/Reflex_Hooks.h>
@@ -374,6 +375,12 @@ void MenuCommon::SeparatorWithHelpMarker(const char* label, const char* tip)
     ImGui::SeparatorTextEx(0, label, ImGui::FindRenderedTextEnd(label),
                            ImGui::CalcTextSize(marker, ImGui::FindRenderedTextEnd(marker)).x);
     ShowHelpMarker(tip);
+}
+
+bool MenuCommon::SliderUInt(const char* label, uint32_t* v, uint32_t v_min, uint32_t v_max, const char* format,
+                            ImGuiSliderFlags flags)
+{
+    return ImGui::SliderScalar(label, ImGuiDataType_U32, v, &v_min, &v_max, format, flags);
 }
 
 class Keybind
@@ -2081,9 +2088,13 @@ void MenuCommon::RenderPerformanceOverlay(RenderMenuContext& ctx)
                                      usesDx12CompatLayer ? " w/Dx12" : "");
             }
 
+            uint32_t interpolatedFrameCount = 0;
             if (fg != nullptr && fg->IsActive() && !fg->IsPaused())
+                interpolatedFrameCount = fg->GetInterpolatedFrameCount();
+
+            if (interpolatedFrameCount)
             {
-                const double baseFps = frameRate / (double) (fg->GetInterpolatedFrameCount() + 1);
+                const double baseFps = frameRate / (double) (interpolatedFrameCount + 1);
 
                 switch (overlayType)
                 {
@@ -3523,6 +3534,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         { FGOutput::FSRFG, "FSR FG", "FSR3/4-FG, RDNA4 自动升级到 FSR4-FG\n\nFSR4-FG 有时优于/劣于 XeFG" },
         { FGOutput::DLSSG, "DLSSG", "DLSSG 输出\n可与 Nukem 等方案联用" },
         { FGOutput::XeFG, "XeFG", "XeFG - 最重, 但最通用\n\nXeFG 3 总体处理 HUD 最好\n\n若 HUD 重影请启用 UI 合成" },
+        { FGOutput::Reprojection, "Reprojection (WIP)", "使用新的鼠标数据重投影游戏画面\n类似 Reflex 2，降低感知延迟\n\n- 需要 STREAMLINE DLSSG 作为输入\n- 仅适用于第一人称视角游戏\n- 仅支持鼠标，不支持手柄\n- 如可能，请关闭游戏内的鼠标/视角平滑\n" },
     };
 
     // clang-format on
@@ -3819,8 +3831,7 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
         }
 
         auto fgOutput = reinterpret_cast<IFGFeature_Dx12*>(state.currentFG);
-        if (((state.activeFgOutput == FGOutput::FSRFG || state.activeFgOutput == FGOutput::XeFG ||
-              state.activeFgOutput == FGOutput::DLSSG) &&
+        if ((state.activeFgOutput != FGOutput::Reprojection && state.activeFgOutput != FGOutput::NoFG &&
              state.activeFgInput != FGInput::NoFG && state.activeFgInput != FGInput::NvngxFG) &&
             fgOutput)
         {
@@ -4647,6 +4658,76 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         ImGui::EndDisabled();
     }
 
+    if (state.activeFgOutput == FGOutput::Reprojection && fgOutput)
+    {
+        ImGui::SeparatorText("Reprojection");
+
+        if (fgOutput->IsActive())
+        {
+            auto reprojection = dynamic_cast<Reprojection_Dx12*>(fgOutput);
+            ImGui::Text("Updated camera position by: %.1fms",
+                        (float) reprojection->GetLastTimeSinceSimStartNs() / 1'000'000.f);
+        }
+        else
+        {
+            ImGui::TextDisabled("Not updating camera position");
+        }
+
+        bool fgActive = config->FGEnabled.value_or_default();
+        if (ImGui::Checkbox("Active##2", &fgActive))
+        {
+            config->FGEnabled = fgActive;
+            LOG_DEBUG("Reprojection enabled: {}", fgActive);
+
+            if (config->FGEnabled.value_or_default())
+                state.fgChanged = true;
+        }
+        ShowHelpMarker("Enable reprojection");
+
+        ImGui::SameLine();
+
+        ImGui::Checkbox("Show static elements", &state.fgHudlessCompare);
+        ShowHelpMarker("For fine tuning the depth cutoff\n"
+                       "Shows UI and depth cutoff areas\n"
+                       "Adjust depth cutoff so that only stuff like your gun and hands are marked");
+
+        ImGui::Spacing();
+
+        // clang-format off
+        static std::vector<MenuOption<ReprojectionFill>> fillModes = {
+            { ReprojectionFill::StrechEdge, "Strech edge" },
+            { ReprojectionFill::Dithering, "Dithering" },
+            { ReprojectionFill::Noise, "Noise" },
+            { ReprojectionFill::Debug, "Debug" }
+        };
+        // clang-format on
+
+        // need to have a value before combo
+        if (!config->ReprojectionFillMode.has_value())
+            config->ReprojectionFillMode = config->ReprojectionFillMode.value_or_default();
+
+        PopulateCombo("Edge fill mode", config->ReprojectionFillMode, fillModes);
+        ShowHelpMarker("You want either dither or noise\n"
+                       "Those two use the unprojected image as fill\n"
+                       "and then some blending on the edges to fool the eye");
+
+        float cutoff = config->ReprojectionDepthCutoff.value_or_default();
+        if (ImGui::SliderFloat("Depth cutoff", &cutoff, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+            config->ReprojectionDepthCutoff = cutoff;
+        ShowHelpMarker("Selects how many elements close to the camera\n"
+                       "should be shown over the reprojected image.\n"
+                       "This prevents your gun from being moved in weird ways.\n\n"
+                       "Use \"Show static elements\" to help you adjust it\n"
+                       "Unreal Engine games are usually around 0.10\n"
+                       "Cyberpunk is around 0.02");
+
+        uint32_t cutoffExpandPx = config->ReprojectionCutoffExpand.value_or_default();
+        if (SliderUInt("Cutoff expand", &cutoffExpandPx, 0, 2))
+            config->ReprojectionCutoffExpand = cutoffExpandPx;
+        ShowHelpMarker("A toddler implemented this so it's super slow\n"
+                       "Use only when you see an outline left by the cutoff process");
+    }
+
     // OptiFG
     if (state.api != API::Vulkan && state.currentFGSwapchain != nullptr && state.activeFgInput == FGInput::Upscaler)
     {
@@ -4655,7 +4736,8 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (currentFeature != nullptr && !currentFeature->IsFrozen() &&
             ((state.activeFgOutput == FGOutput::FSRFG && FfxApiProxy::IsFGReady()) ||
              (state.activeFgOutput == FGOutput::XeFG && XeFGProxy::Module() != nullptr) ||
-             (state.activeFgOutput == FGOutput::DLSSG && StreamlineProxy::Module() != nullptr)))
+             (state.activeFgOutput == FGOutput::DLSSG && StreamlineProxy::Module() != nullptr) ||
+             state.activeFgOutput == FGOutput::Reprojection))
         {
             const bool dx11HudfixTracking = state.swapchainInteropApi == SwapchainInteropApi::Dx11wDx12;
             const bool hudfixTrackingSupported =

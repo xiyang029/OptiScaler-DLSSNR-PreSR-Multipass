@@ -6,6 +6,7 @@
 #include <framegen/ffx/FSRFG_Dx12.h>
 #include <framegen/xefg/XeFG_Dx12.h>
 #include <framegen/dlssg/DLSSG_Dx12.h>
+#include <framegen/reprojection/Reprojection_Dx12.h>
 
 #include <inputs/FG/FSR3_Dx12_FG.h>
 #include <inputs/FG/FfxApi_Dx12_FG.h>
@@ -157,6 +158,10 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
         {
             State::Instance().currentFG = new DLSSG_Dx12();
         }
+        else if (State::Instance().activeFgOutput == FGOutput::Reprojection)
+        {
+            State::Instance().currentFG = new Reprojection_Dx12();
+        }
     }
 
     // Create FG swapchain
@@ -262,6 +267,10 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
         else if (State::Instance().activeFgOutput == FGOutput::DLSSG)
         {
             State::Instance().currentFG = new DLSSG_Dx12();
+        }
+        else if (State::Instance().activeFgOutput == FGOutput::Reprojection)
+        {
+            State::Instance().currentFG = new Reprojection_Dx12();
         }
     }
 
@@ -1191,7 +1200,7 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
                 state.currentD3D11Device->GetImmediateContext(&context);
 
                 if (upscalerTimeOpt = currentFeature->ReadUpscalerTime(context); upscalerTimeOpt.has_value())
-                    currentFeature->ReadDetailedGpuTimes(context, State::Instance().detailedGpuTimes);
+                    currentFeature->ReadDetailedGpuTimes(context, state.detailedGpuTimes);
 
                 context->Release();
             }
@@ -1201,6 +1210,11 @@ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
                     upscalerTimeOpt.has_value())
                 {
                     currentFeature->ReadDetailedGpuTimes(state.currentCommandQueue, state.detailedGpuTimes);
+                }
+
+                if (auto fgGpuTime = fg->ReadGpuTime(state.currentCommandQueue))
+                {
+                    state.detailedGpuTimes.emplace_back(DetailedGpuTime { fg->Name(), fgGpuTime.value(), false });
                 }
             }
 

@@ -455,6 +455,14 @@ static const QuirkEntry quirkTable[] = {
     QUIRK_ENTRY("acblackflag.exe", GameQuirk::DisableDxgiSpoofing),
     QUIRK_ENTRY("acblackflag_plus.exe", GameQuirk::DisableDxgiSpoofing),
 
+    // FBC: Firebreak
+    // SL spoof enough to unlock everything DLSS
+    QUIRK_ENTRY("fbcfirebreak.exe", GameQuirk::DisableDxgiSpoofing),
+
+    // CONTROL Resonant
+    // SL spoof enough to unlock everything DLSS
+    QUIRK_ENTRY("controlresonant.exe", GameQuirk::DisableDxgiSpoofing),
+
     // SL spoof enough to unlock everything DLSS/No spoof needed for DLSS inputs
     //
     // Crysis 3 Remastered, Warhammer 40,000: Darktide, Rise of the Ronin, DYNASTY WARRIORS: ORIGINS, Crysis Remastered,
