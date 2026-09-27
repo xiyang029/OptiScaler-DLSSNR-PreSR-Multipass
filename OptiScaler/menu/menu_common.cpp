@@ -3867,7 +3867,12 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::EndDisabled();
         }
 
-        const bool showOutputSpecificFGSettings = state.activeFgInput == FGInput::DLSSG ||
+        // The panel holds the XeFG runtime settings (frame time input,
+        // history reset). Show it whenever a XeFG output is live - including
+        // DLSSG/FSR-FG/NvngxFG input driving XeFG output - so the reset and
+        // frame-time knobs are always reachable without hiding anything.
+        const bool showOutputSpecificFGSettings = state.activeFgOutput == FGOutput::XeFG ||
+                                                  state.activeFgInput == FGInput::DLSSG ||
                                                   state.activeFgInput == FGInput::FSRFG ||
                                                   state.activeFgInput == FGInput::FSRFG30;
 
@@ -4005,7 +4010,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                         ImGui::PopItemWidth();
 
                         ShowHelpMarker("选择帧时间来源\n"
-                                       "可能改善帧调度与卡顿问题");
+                                       "可能改善帧调度与卡顿问题\n"
+                                       "实时生效，无需重启");
                     }
                 }
 
@@ -4018,8 +4024,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
                     ShowHelpMarker("从 UI 截断透明以辅助插值\n"
                                    "可用显示检测到的 UI 查看差异\n0.0 为自动");
                 }
-            }
-        }
+            }  // end ScopedCollapsingHeader
+        }  // end if (showOutputSpecificFGSettings || showHudCutoff)
     }
 }
 
@@ -4368,10 +4374,6 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
         auto maxInterpolationCount = fgOutput->GetMaxInterpolationCount();
 
-        // The policy owns the count while AutoMFG is on; the manual combo would
-        // fight it, so it goes read-only (it still shows the live count).
-        ImGui::BeginDisabled(config->FGXeFGAutoMFG.value_or_default());
-
         if (maxInterpolationCount > 1)
         {
             ImGui::SameLine(0.0f, 16.0f);
@@ -4405,45 +4407,11 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
             ShowHelpMarker("设置 XeFG 插值数");
         }
 
-        ImGui::EndDisabled();
-
-        bool autoMfg = config->FGXeFGAutoMFG.value_or_default();
-        if (ImGui::Checkbox("动态多帧", &autoMfg))
-            config->FGXeFGAutoMFG = autoMfg;
-
-        ShowHelpMarker("按输出帧数自动升降倍数\n"
-                       "输出不够就升，基帧恶化或输出超标就降\n"
-                       "快降慢升，带迟滞防振荡\n\n"
-                       "切换无暂停（失败才回退暂停路径）");
-
-        if (autoMfg)
-        {
-            int targetFps = config->FGXeFGAutoMFGTargetFps.value_or_default();
-            ImGui::PushItemWidth(140.0f * menuResScale);
-            if (ImGui::SliderInt("目标输出fps", &targetFps, 30, 480))
-                config->FGXeFGAutoMFGTargetFps = targetFps;
-            ImGui::PopItemWidth();
-            ShowHelpMarker("输出fps目标 = 基帧 x (插值数+1)\n"
-                           "不够就升档，超标 1.5 倍就降档省 GPU");
-
-            // Degenerate provider max (<= 1X) has no range to bound: hide the slider.
-            if (maxInterpolationCount > 1)
-            {
-                int minFrames = config->FGXeFGAutoMFGMinFrames.value_or_default();
-                ImGui::PushItemWidth(140.0f * menuResScale);
-                if (ImGui::SliderInt("最低插值数", &minFrames, 1, maxInterpolationCount))
-                    config->FGXeFGAutoMFGMinFrames = minFrames;
-                ImGui::PopItemWidth();
-                ShowHelpMarker("动态范围下限\n"
-                               "上限复用 MaxInterpolatedFrames");
-            }
-        }
-
-        ImGui::SameLine(0.0f, 16.0f);
-        ImGui::BeginDisabled(!fgOutput->IsUsingHudlessAny() || XeFGProxy::SetUiCompositionState() == nullptr);
-        bool fgCompositeUI = config->FGXeFGUIComposition.value_or_default();
-        if (ImGui::Checkbox("UI 合成", &fgCompositeUI))
-            config->FGXeFGUIComposition = fgCompositeUI;
+    ImGui::SameLine(0.0f, 16.0f);
+    ImGui::BeginDisabled(!fgOutput->IsUsingHudlessAny() || XeFGProxy::SetUiCompositionState() == nullptr);
+    bool fgCompositeUI = config->FGXeFGUIComposition.value_or_default();
+    if (ImGui::Checkbox("UI 合成", &fgCompositeUI))
+        config->FGXeFGUIComposition = fgCompositeUI;
 
         ShowHelpMarker("禁用 HUD/UI 插值\n"
                        "回退到旧版 XeFG 2 行为\n\n"
@@ -4485,9 +4453,9 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
         if (ImGui::Checkbox("自动重置历史", &fgAutoReset))
             config->FGXeFGAutoReset = fgAutoReset;
 
-        ShowHelpMarker("FG 重启与镜头切变时自动重置历史\n\n"
-                       "防止旧场景残影糊到新场景上\n"
-                       "(传送/过场闪烁)\n\n"
+        ShowHelpMarker("FG 激活（暂停恢复）时重置历史\n\n"
+                       "传送级切镜头（位移≥50）也重置，防止旧场景糊到新场景\n\n"
+                       "甩镜/过场级变化只记日志，不掉插值帧\n\n"
                        "关闭则只信游戏的重置信号");
 
         // Disable this for now

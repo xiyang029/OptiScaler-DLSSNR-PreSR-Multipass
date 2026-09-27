@@ -14,6 +14,9 @@
 
 #include <DirectXMath.h>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace DirectX;
 
 void XeFG_Dx12::xefgLogCallback(const char* message, xefg_swapchain_logging_level_t level, void* userData)
@@ -615,13 +618,8 @@ void XeFG_Dx12::Activate()
             // pause must not seed the first bursts (teleport smear).
             _forceResetNext = true;
             _hasPrevViewMatrix = false;
-
-            // Fresh policy state: votes from the previous session (loading
-            // sludge included) must not pin the first gear.
-            _autoMfgAccumMs = 0.0;
-            _autoMfgSamples = 0;
-            _autoMfgUpVotes = 0;
-            _autoMfgBaseAtStepMs = 0.0;
+            _cameraCutLatched = false;
+            _fedClampStreak = 0;
         }
 
         LOG_INFO("SetEnabled: true, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
@@ -699,104 +697,6 @@ bool XeFG_Dx12::Shutdown()
     return true;
 }
 
-int XeFG_Dx12::EvaluateAutoMFG(int fIndex)
-{
-    int targetFps = Config::Instance()->FGXeFGAutoMFGTargetFps.value_or_default();
-
-    if (targetFps < 30)
-        targetFps = 30;
-    else if (targetFps > 480)
-        targetFps = 480;
-
-    // The target is OUTPUT fps: outputNow = baseFps * (want + 1). Climb while
-    // the output falls short of it; back off when the base frame itself
-    // degrades (FG load included) or the output overshoots it.
-    const double budgetMs = 1000.0 / targetFps;
-    double dirtyMs = budgetMs * 3.0;
-
-    if (dirtyMs < 50.0)
-        dirtyMs = 50.0;
-
-    const float sampleMs = (float) _ftDelta[fIndex];
-
-    // Loading frames and hitch spikes must not vote: a 686 ms load would
-    // otherwise pin the policy at the floor before gameplay even starts, and
-    // a single hitch would panic-downgrade a healthy gear. Sustained
-    // slowness still votes normally.
-    if (sampleMs > 0.0f && sampleMs < 1000.0f && sampleMs <= dirtyMs)
-    {
-        _autoMfgAccumMs += sampleMs;
-        _autoMfgSamples++;
-    }
-
-    int want = _framesToInterpolate;
-
-    // One evaluation per ~30 dispatched frames. Downgrade fires on the first
-    // bad window (fast down); upgrade needs two calm windows in a row (slow
-    // up). A step costs one reset flash, so the bands stay wide.
-    constexpr uint32_t EvalWindow = 30;
-
-    if (_autoMfgSamples < EvalWindow)
-        return want;
-
-    const double avgMs = _autoMfgAccumMs / _autoMfgSamples;
-    _autoMfgAccumMs = 0.0;
-    _autoMfgSamples = 0;
-
-    const int hi = _maxInterpolationCount;
-
-    if (hi < 1)
-        return want;
-
-    // avgMs > 0 holds: every accumulated sample is > 0.
-    int lo = Config::Instance()->FGXeFGAutoMFGMinFrames.value_or_default();
-
-    if (lo < 1)
-        lo = 1;
-
-    if (lo > hi)
-        lo = hi;
-
-    // No `want < 1` fixup here: the final clamp already forces want >= lo >= 1.
-    const double outputNow = (1000.0 / avgMs) * (want + 1);
-
-    if (avgMs > 50.0 && want > lo)
-    {
-        // Base frame itself is unhealthy (< 20 fps): protect playability first.
-        want--;
-        _autoMfgUpVotes = 0;
-    }
-    else if (outputNow < targetFps * 0.9 && want < hi &&
-             (_autoMfgBaseAtStepMs <= 0.0 || avgMs <= _autoMfgBaseAtStepMs * 1.2))
-    {
-        // Output falls short and climbing has not degraded the base frame:
-        // step up after two consecutive calm windows.
-        if (++_autoMfgUpVotes >= 2)
-        {
-            want++;
-            _autoMfgUpVotes = 0;
-            _autoMfgBaseAtStepMs = avgMs;
-        }
-    }
-    else if (outputNow > targetFps * 1.5 && want > lo)
-    {
-        // Overshooting the target: save the GPU, the extra frames buy nothing.
-        want--;
-        _autoMfgUpVotes = 0;
-    }
-    else
-    {
-        _autoMfgUpVotes = 0;
-    }
-
-    if (want < lo)
-        want = lo;
-    else if (want > hi)
-        want = hi;
-
-    return want;
-}
-
 void XeFG_Dx12::ApplyInterpolationCountSmooth(int count)
 {
     LOG_INFO("Interpolation count changed {} -> {} (smooth, no toggle pause)", _framesToInterpolate, count);
@@ -819,9 +719,9 @@ void XeFG_Dx12::ApplyInterpolationCountSmooth(int count)
         return;
     }
 
-    // Burst structure changed: reseed history on the next burst.
-    if (Config::Instance()->FGXeFGAutoReset.value_or_default())
-        _forceResetNext = true;
+    // History carries over across gear changes: resetting on every
+    // count step costs a full frame of interpolation and tanks 1% low.
+    // Only FG activation (Apply) needs a clean slate.
 }
 
 bool XeFG_Dx12::Dispatch()
@@ -880,27 +780,12 @@ bool XeFG_Dx12::Dispatch()
                      _maxInterpolationCount);
         }
 
-        int wantCount = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
-
-        // Dynamic MFG overrides the static target from the base-frame budget.
-        // Reached only while active: Dispatch early-returns when paused.
-        if (Config::Instance()->FGXeFGAutoMFG.value_or_default())
-            wantCount = EvaluateAutoMFG(fIndex);
+        // Static count only: the manual 2X-8X combo drives the target, no
+        // dynamic policy may override it.
+        const int wantCount = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
 
         if (_framesToInterpolate != wantCount)
             ApplyInterpolationCountSmooth(wantCount);
-    }
-    else if (Config::Instance()->FGXeFGAutoMFG.value_or_default())
-    {
-        // Old provider without the runtime count API: the policy has nothing
-        // to drive. Say so once instead of leaving dead sliders.
-        static bool autoMfgWarned = false;
-
-        if (!autoMfgWarned)
-        {
-            autoMfgWarned = true;
-            LOG_WARN("AutoMFG needs a libxess_fg with SetNumInterpolatedFrames; staying static");
-        }
     }
 
     // Workaround for wrong frame limit
@@ -994,12 +879,19 @@ bool XeFG_Dx12::Dispatch()
         viewValid = true;
     }
 
-    // Camera-cut self detection: games often forget to signal resetHistory on
-    // cuts/teleports, and the stale history then smears the old scene over the
-    // new one (teleport flash). Normal per-frame motion moves view elements by
-    // ~0.01-0.2; a cut moves them by whole units, so 2.0 stays far above even
-    // fast camera whips. Nanoseconds of CPU, no waits, no present-rate change.
-    // Gated by [XeFG] AutoReset: off trusts the game's reset signal only.
+    // Camera-cut self detection, tiered. Games often forget to signal
+    // resetHistory on cuts/teleports and the stale history then smears the old
+    // scene over the new one, but a reset does drop one interpolated frame -
+    // so it is only worth forcing when the evidence is unambiguous. Normal
+    // motion moves view elements by ~0.01-0.2, a fast whip or a sliding
+    // cutscene by single units, a teleport by whole hundreds. Below 50 it is
+    // logged only; at and above 50 no whip in a real game reaches it, so the
+    // history reset fires exactly on cuts and never on camera speed.
+    // Edge-triggered: one reset per cut event, re-armed only after the delta
+    // falls back below the threshold, so a game that streams high view deltas
+    // continuously (free-fall, hypersonic vehicle) gets one clean break
+    // instead of a reset every burst, which would degrade FG to passthrough.
+    // Gated by [XeFG] AutoReset.
     const bool autoReset = Config::Instance()->FGXeFGAutoReset.value_or_default();
     bool cameraCut = false;
 
@@ -1013,19 +905,37 @@ bool XeFG_Dx12::Dispatch()
             for (int i = 0; i < 16; i++)
             {
                 const float d = fabsf(cur[i] - _prevViewMatrix[i]);
-
                 if (d > maxDelta)
                     maxDelta = d;
             }
 
-            cameraCut = maxDelta > 2.0f;
+            if (maxDelta > 2.0f)
+            {
+                if (maxDelta >= 50.0f && !_cameraCutLatched)
+                {
+                    _cameraCutLatched = true;
+                    cameraCut = true;
+                    LOG_DEBUG("Teleport-sized camera cut (view delta {:.2f}), forcing history reset", maxDelta);
+                }
+                else if (maxDelta >= 50.0f)
+                {
+                    LOG_DEBUG("Camera cut still above threshold (view delta {:.2f}), reset already fired", maxDelta);
+                }
+                else
+                {
+                    _cameraCutLatched = false;
+                    LOG_DEBUG("Camera cut detected (view delta {:.2f}, below teleport threshold), logged only",
+                              maxDelta);
+                }
+            }
+            else
+            {
+                _cameraCutLatched = false;
+            }
 
-            if (cameraCut)
-                LOG_DEBUG("Camera cut detected (view delta {:.2f}), forcing history reset", maxDelta);
+            memcpy(_prevViewMatrix, constData.viewMatrix, sizeof(_prevViewMatrix));
+            _hasPrevViewMatrix = true;
         }
-
-        memcpy(_prevViewMatrix, constData.viewMatrix, sizeof(_prevViewMatrix));
-        _hasPrevViewMatrix = true;
     }
 
     if (Config::Instance()->FGXeFGDepthInverted.value_or_default())
@@ -1061,9 +971,9 @@ bool XeFG_Dx12::Dispatch()
 
     if (!Config::Instance()->FGSkipReset.value_or_default())
     {
-        // Game signal OR (fresh activation / detected camera cut when AutoReset
-        // is on). All three only affect the interpolated content of this burst
-        // - present count, waits and resolution are untouched.
+        // Game signal OR fresh activation OR a teleport-sized camera cut.
+        // All three only affect the interpolated content of this burst -
+        // present count, waits and resolution are untouched.
         constData.resetHistory = (_reset[fIndex] != 0) || (autoReset && (_forceResetNext || cameraCut));
     }
     else
@@ -1076,10 +986,15 @@ bool XeFG_Dx12::Dispatch()
     switch (Config::Instance()->FTInput.value_or_default())
     {
     case FrameTimeSource::Input:
-        // Ask the pacing first: _ftDelta is filled with lastFGFrameTime on this backend
-        // (Upscaler_Inputs_Dx12), i.e. the same self-referential present-to-present number
-        // under another name. Tried first it always wins and RenderTimeMs() is never reached.
-        // (Ported from Coldwood1026/OptiScalerDp4aUnlock c0ec7979)
+        // RenderTimeMs() first: it is the measured period with this burst's own
+        // pacing block taken back out. _ftDelta / lastFGFrameTime are measured
+        // around the game Present and INCLUDE that block, so feeding them back
+        // raw compounds burst-over-burst into a high-latency fixed point
+        // (period = render + period*count/(count+1): higher mult, longer
+        // "real" frame). Falls stay immediate for low latency; rises are
+        // slew-limited so genuine load still converges within a few bursts.
+        // Clamped to a sane range so a hitch spike never sizes the provider's
+        // interval (ghost + latency spike).
         constData.frameRenderTime = static_cast<float>(XeFGPacing::RenderTimeMs());
         if (!(constData.frameRenderTime > 0.0f))
         {
@@ -1087,15 +1002,46 @@ bool XeFG_Dx12::Dispatch()
         }
         else if (_lastFedFrameTimeMs > 0.0f && constData.frameRenderTime > _lastFedFrameTimeMs)
         {
-            // Slew-limit upward steps: the measured period contains this
-            // burst's own pacing block, so feeding it back raw compounds
-            // burst-over-burst into a high-latency fixed point. Falls stay
-            // immediate; genuine scene load still converges within a few
-            // bursts (+15% / +0.25 ms per burst).
-            const float riseCap = _lastFedFrameTimeMs * 1.15f + 0.25f;
+            // A rise is capped per burst, but a fixed +15% is far too timid
+            // when a heavy scene loads and the real period doubles: the fed
+            // number lags for a dozen bursts, the provider keeps spacing the
+            // burst by the stale short interval, and every burst arrives
+            // clumped - which costs latency AND smears the interpolation.
+            // Allow a brisk rise (+60%, min +6 ms) that still cannot let one
+            // outlier frame set the pace, because the value is slew-checked
+            // against the previous fed number, not against a raw sample.
+            const float riseCap = _lastFedFrameTimeMs * 1.6f + 6.0f;
 
             if (constData.frameRenderTime > riseCap)
                 constData.frameRenderTime = riseCap;
+        }
+
+        if (constData.frameRenderTime < 1.0f)
+        {
+            constData.frameRenderTime = 1.0f;
+            _fedClampStreak = 0;
+        }
+        else if (constData.frameRenderTime > 100.0f)
+        {
+            // Cap the provider's interval so a hitch never sizes the pacing
+            // block. A single clamp needs no reset: the stale history is
+            // harmless for one burst and resetting drops an interpolated
+            // frame. But clamped bursts back to back mean the scene really
+            // renders slower than the cap, so the motion vectors of this
+            // frame are far outside what the interval can interpolate
+            // correctly - that is exactly the ghosting case, so ask for one
+            // history reset and let the next burst re-anchor.
+            constData.frameRenderTime = 100.0f;
+
+            if (++_fedClampStreak >= 2)
+            {
+                _fedClampStreak = 0;
+                _forceResetNext = true;
+            }
+        }
+        else
+        {
+            _fedClampStreak = 0;
         }
 
         _lastFedFrameTimeMs = constData.frameRenderTime;

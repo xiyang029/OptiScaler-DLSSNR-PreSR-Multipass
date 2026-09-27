@@ -34,28 +34,38 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     uint32_t _presentStarveCount = 0;
 
     // One-shot history reset consumed by the next Dispatch. Set on Activate
-    // (stale history from before the pause must not seed new bursts) and on
-    // camera-cut detection (see Dispatch). Reset frames cost no presents and
-    // no latency: only the interpolated content of that burst goes history-free.
+    // (stale history from before the pause must not seed new bursts) and on a
+    // detected teleport-sized camera cut (see Dispatch). Reset frames cost no
+    // presents and no latency: only the interpolated content of that burst
+    // goes history-free.
+    // Gear changes (ApplyInterpolationCountSmooth) do NOT reset history
+    // to avoid dropping a frame of interpolation on every step.
     bool _forceResetNext = false;
 
     // Previous view matrix for camera-cut detection, with validity flag.
     float _prevViewMatrix[16] = {};
     bool _hasPrevViewMatrix = false;
 
-    // Dynamic MFG policy state: base-frame budget accumulator over the eval
-    // window, consecutive up-votes for hysteresis (fast down, slow up), and
-    // the base frame time recorded at the last step-up (climbing stops if it
-    // degrades the base frame by more than 20%).
-    double _autoMfgAccumMs = 0.0;
-    uint32_t _autoMfgSamples = 0;
-    uint32_t _autoMfgUpVotes = 0;
-    double _autoMfgBaseAtStepMs = 0.0;
+    // Edge trigger for the teleport-sized cut reset: fires once per cut event
+    // and re-arms when the delta drops back below the threshold.
+    bool _cameraCutLatched = false;
 
-    // Frame-time budget policy: returns the wanted interpolation count.
-    int EvaluateAutoMFG(int fIndex);
-    // Runtime count switch without the 10-frame toggle pause. On provider
-    // error falls back to the legacy WAR toggle path.
+    // Cached projection inputs: avoids rebuilding the perspective matrix when
+    // camera params are unchanged (Dispatch runs every burst).
+    float _projCacheNear = 0.0f;
+    float _projCacheFar = 0.0f;
+    float _projCacheVFov = 0.0f;
+    float _projCacheAspect = 0.0f;
+    bool _projCacheValid = false;
+
+    // Consecutive bursts whose fed frameRenderTime hit the upper clamp. Two
+    // clamps in a row mean the scene genuinely renders slower than the cap,
+    // so the provider sizes its interval from a number that is not this
+    // frame's period - request one history reset and re-anchor.
+    uint32_t _fedClampStreak = 0;
+
+    // Runtime count switch without the 10-frame toggle pause (manual 2X-8X
+    // changes). On provider error falls back to the legacy WAR toggle path.
     void ApplyInterpolationCountSmooth(int count);
 
     std::unique_ptr<DI_Dx12> _depthInvert;

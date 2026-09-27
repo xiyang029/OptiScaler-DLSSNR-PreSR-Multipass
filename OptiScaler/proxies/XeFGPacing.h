@@ -269,6 +269,24 @@ inline int64_t g_targetQpc = 0;
 inline int64_t g_samples[SampleCount] {};
 inline int32_t g_sampleCount = 0;
 inline int32_t g_samplePos = 0;
+
+// The same window over a *different* series: each burst's period with that
+// burst's own pacing block already taken out, i.e. the part of the frame the
+// game actually got to render. It has to be its own median rather than
+// `g_periodNs` minus the last block, because those are a filtered and an
+// unfiltered number taken from different bursts - the difference is wrong
+// exactly when the block changes size, which is whenever the gear changes.
+// This is the number that ends up in `frameRenderTime`, so getting it wrong
+// is what makes the provider size the interpolation from a period the motion
+// vectors do not span: over-report and the generated frames smear.
+inline int64_t g_renderSamples[SampleCount] {};
+inline int32_t g_renderSampleCount = 0;
+inline int32_t g_renderSamplePos = 0;
+
+// Phase-locked burst grid. See PaceFrame for why the burst no longer
+// re-anchors on `now` every time.
+inline int64_t g_burstAnchorQpc = 0;
+
 inline int64_t g_pacedFrames = 0;
 inline int64_t g_pacedBursts = 0;
 inline bool g_loggedFirstBurst = false;
@@ -300,6 +318,16 @@ inline int64_t g_lastMultiplier = 0;
 // once that is taken back out of it. See RenderTimeMs.
 inline int64_t g_burstBlockQpc = 0;
 inline int64_t g_renderTimeNs = 0;
+
+// High resolution waitable timer for WaitUntil. The system tick is 15.6 ms
+// unless somebody raised it with timeBeginPeriod, and the pacing must not
+// depend on that: every Sleep(1) in the far part of a wait can overshoot by
+// most of a tick, which is a third to a half of the whole interval at 4X+.
+// A HIGH_RESOLUTION timer is accurate to ~0.5 ms without touching the global
+// timer resolution, so it replaces the Sleep loop; the spin tail stays for
+// the last half millisecond.
+inline HANDLE g_timerHandle = nullptr;
+inline bool g_timerUsable = true;
 
 // What the provider was handed as `frameRenderTime`, in milliseconds.
 // XeFG_Dx12.cpp is the only caller. Recorded rather than returned because the
@@ -520,16 +548,66 @@ inline double RenderTimeMs() { return g_renderTimeNs > 0 ? g_renderTimeNs / 1000
 
 inline void NoteFedFrameTime(double ms) { g_fedFrameTimeMs = ms; }
 
+// Waits `remaining` QPC ticks on the high resolution timer created at
+// Install. Returns whether the wait actually happened; anything that goes
+// wrong on the timer marks it unusable so the loop falls back to Sleep for
+// the rest of the session. The provider runs this on the swapchain present
+// thread, so the wait must not hold the CPU while it is far from the
+// deadline.
+inline bool TimerWait(int64_t remainingQpc)
+{
+    if (g_timerHandle == nullptr)
+    {
+        g_timerHandle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                               TIMER_ALL_ACCESS);
+
+        if (g_timerHandle == nullptr)
+        {
+            g_timerUsable = false;
+            return false;
+        }
+    }
+
+    // Relative due time in 100 ns units, negative = from now.
+    LARGE_INTEGER due;
+    due.QuadPart = -((remainingQpc * 10000000LL) / g_freq.QuadPart);
+
+    if (!SetWaitableTimerEx(g_timerHandle, &due, 0, nullptr, nullptr, nullptr, 0))
+    {
+        g_timerUsable = false;
+        return false;
+    }
+
+    // A generous ceiling instead of INFINITE: however the timer misbehaves,
+    // the present thread must not be able to hang on it. A timeout just
+    // returns to the QPC re-check in the caller's loop.
+    const DWORD timeoutMs = static_cast<DWORD>((remainingQpc * 1000) / g_freq.QuadPart + 50);
+    const DWORD waitResult = WaitForSingleObject(g_timerHandle, timeoutMs);
+
+    if (waitResult == WAIT_OBJECT_0 || waitResult == WAIT_TIMEOUT)
+        return true;
+
+    // Failed or abandoned, not just slow: do not pay for this again.
+    g_timerUsable = false;
+    return false;
+}
+
 // The provider runs this on the swapchain present thread, so the tail of the
-// wait has to be cheap and must not overshoot by much. Far out (>4 ms) a
-// 1 ms sleep yields the CPU and lowers contention (better 1% low); inside
-// 4 ms it falls back to Sleep(0), inside 200 us to a pure Yield spin so the
-// final edge still lands precisely.
+// wait has to be cheap and must not overshoot by much. The far part is handed
+// to the high resolution timer (~0.5 ms accuracy) - the old Sleep(1) loop
+// could overshoot by most of a 15.6 ms system tick when nothing had raised
+// the global timer resolution, and a burst interval at 4X is 4-6 ms, so a
+// single Sleep could eat a third of the spacing it was trying to enforce
+// (the same rounding that killed the fence-based pacing, see §4.6). Inside
+// half a millisecond it spins on YieldProcessor so the final edge still
+// lands precisely. If the timer is unavailable, degrade to the old Sleep(1) /
+// Sleep(0) / spin ladder.
 inline void WaitUntil(int64_t targetQpc)
 {
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
 
+    const int64_t spinBelow = QpcFromNs(500000);   // 0.5 ms
     const int64_t sleepBelow = QpcFromNs(4000000); // 4 ms
     const int64_t yieldBelow = QpcFromNs(200000);  // 200 us
 
@@ -537,12 +615,20 @@ inline void WaitUntil(int64_t targetQpc)
     {
         const int64_t remaining = targetQpc - now.QuadPart;
 
-        if (remaining > sleepBelow)
-            Sleep(1);
-        else if (remaining > yieldBelow)
-            Sleep(0);
-        else
-            YieldProcessor();
+        bool waited = false;
+
+        if (g_timerUsable && remaining > spinBelow)
+            waited = TimerWait(remaining);
+
+        if (!waited)
+        {
+            if (remaining > sleepBelow)
+                Sleep(1);
+            else if (remaining > yieldBelow)
+                Sleep(0);
+            else
+                YieldProcessor();
+        }
 
         QueryPerformanceCounter(&now);
     }
@@ -988,6 +1074,8 @@ inline bool Install(uint8_t* base)
     g_burstBlockQpc = 0;
     g_renderTimeNs = 0;
     g_fedFrameTimeMs = 0.0;
+    g_timerHandle = nullptr;
+    g_timerUsable = true;
     g_ring = nullptr;
     g_nextDeadlineNs = 0;
     g_burstStepNs = 0;
