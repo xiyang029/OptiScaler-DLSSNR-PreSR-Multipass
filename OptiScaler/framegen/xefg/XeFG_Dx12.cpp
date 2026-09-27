@@ -619,7 +619,6 @@ void XeFG_Dx12::Activate()
             _forceResetNext = true;
             _hasPrevViewMatrix = false;
             _cameraCutLatched = false;
-            _fedClampStreak = 0;
         }
 
         LOG_INFO("SetEnabled: true, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
@@ -663,10 +662,6 @@ void XeFG_Dx12::Deactivate()
 
         //_lastDispatchedFrame = 0;
         _waitingNewFrameData = false;
-
-        // Drop the feed baseline so the next activation re-baselines instead
-        // of slew-clamping a heavier scene against a stale value.
-        _lastFedFrameTimeMs = 0.0f;
 
         LOG_INFO("SetEnabled: false, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
     }
@@ -986,65 +981,10 @@ bool XeFG_Dx12::Dispatch()
     switch (Config::Instance()->FTInput.value_or_default())
     {
     case FrameTimeSource::Input:
-        // RenderTimeMs() first: it is the measured period with this burst's own
-        // pacing block taken back out. _ftDelta / lastFGFrameTime are measured
-        // around the game Present and INCLUDE that block, so feeding them back
-        // raw compounds burst-over-burst into a high-latency fixed point
-        // (period = render + period*count/(count+1): higher mult, longer
-        // "real" frame). Falls stay immediate for low latency; rises are
-        // slew-limited so genuine load still converges within a few bursts.
-        // Clamped to a sane range so a hitch spike never sizes the provider's
-        // interval (ghost + latency spike).
+        // (Ported from Coldwood1026/OptiScalerDp4aUnlock c0ec7979)
         constData.frameRenderTime = static_cast<float>(XeFGPacing::RenderTimeMs());
         if (!(constData.frameRenderTime > 0.0f))
-        {
             constData.frameRenderTime = (float) _ftDelta[fIndex];
-        }
-        else if (_lastFedFrameTimeMs > 0.0f && constData.frameRenderTime > _lastFedFrameTimeMs)
-        {
-            // A rise is capped per burst, but a fixed +15% is far too timid
-            // when a heavy scene loads and the real period doubles: the fed
-            // number lags for a dozen bursts, the provider keeps spacing the
-            // burst by the stale short interval, and every burst arrives
-            // clumped - which costs latency AND smears the interpolation.
-            // Allow a brisk rise (+60%, min +6 ms) that still cannot let one
-            // outlier frame set the pace, because the value is slew-checked
-            // against the previous fed number, not against a raw sample.
-            const float riseCap = _lastFedFrameTimeMs * 1.6f + 6.0f;
-
-            if (constData.frameRenderTime > riseCap)
-                constData.frameRenderTime = riseCap;
-        }
-
-        if (constData.frameRenderTime < 1.0f)
-        {
-            constData.frameRenderTime = 1.0f;
-            _fedClampStreak = 0;
-        }
-        else if (constData.frameRenderTime > 100.0f)
-        {
-            // Cap the provider's interval so a hitch never sizes the pacing
-            // block. A single clamp needs no reset: the stale history is
-            // harmless for one burst and resetting drops an interpolated
-            // frame. But clamped bursts back to back mean the scene really
-            // renders slower than the cap, so the motion vectors of this
-            // frame are far outside what the interval can interpolate
-            // correctly - that is exactly the ghosting case, so ask for one
-            // history reset and let the next burst re-anchor.
-            constData.frameRenderTime = 100.0f;
-
-            if (++_fedClampStreak >= 2)
-            {
-                _fedClampStreak = 0;
-                _forceResetNext = true;
-            }
-        }
-        else
-        {
-            _fedClampStreak = 0;
-        }
-
-        _lastFedFrameTimeMs = constData.frameRenderTime;
         break;
 
     case FrameTimeSource::Opti:

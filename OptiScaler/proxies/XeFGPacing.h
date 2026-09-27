@@ -1132,36 +1132,4 @@ inline bool Install(uint8_t* base)
 
     return true;
 }
-
-// Live snapshot for the FPS overlay. Reads only; safe from any thread.
-// `live` is false until a full real frame period has been measured.
-struct StatsSnapshot
-{
-    bool live = false;
-    int64_t multiplier = 0;
-    double periodMs = 0.0;
-    double intervalMs = 0.0;
-    double gapAvgMs = 0.0;
-    double fedMs = 0.0;
-};
-
-inline StatsSnapshot GetStatsSnapshot()
-{
-    StatsSnapshot s;
-
-    if (!g_enabled || g_freq.QuadPart <= 0 || g_periodNs <= 0)
-        return s;
-
-    s.live = true;
-    s.multiplier = g_lastMultiplier;
-    s.periodMs = g_periodNs / 1000000.0;
-    s.intervalMs = MsFromQpc(g_intervalQpc);
-
-    if (g_gapCount > 0)
-        s.gapAvgMs = MsFromQpc(g_gapSumQpc / g_gapCount);
-
-    s.fedMs = g_fedFrameTimeMs;
-
-    return s;
-}
 } // namespace XeFGPacing

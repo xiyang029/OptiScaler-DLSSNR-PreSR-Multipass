@@ -25,10 +25,6 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     std::optional<bool> _haveHudless = std::nullopt;
     bool _uiComposition = false;
 
-    // Last frameRenderTime fed to the provider. Used to slew-limit upward
-    // steps and break the measured-period feedback loop (see Dispatch).
-    float _lastFedFrameTimeMs = 0.0f;
-
     // Consecutive starved Presents (no NewFrame within the watchdog window).
     // A single hitch skews present IDs without meaning starvation.
     uint32_t _presentStarveCount = 0;
@@ -57,12 +53,6 @@ class XeFG_Dx12 : public virtual IFGFeature_Dx12
     float _projCacheVFov = 0.0f;
     float _projCacheAspect = 0.0f;
     bool _projCacheValid = false;
-
-    // Consecutive bursts whose fed frameRenderTime hit the upper clamp. Two
-    // clamps in a row mean the scene genuinely renders slower than the cap,
-    // so the provider sizes its interval from a number that is not this
-    // frame's period - request one history reset and re-anchor.
-    uint32_t _fedClampStreak = 0;
 
     // Runtime count switch without the 10-frame toggle pause (manual 2X-8X
     // changes). On provider error falls back to the legacy WAR toggle path.
