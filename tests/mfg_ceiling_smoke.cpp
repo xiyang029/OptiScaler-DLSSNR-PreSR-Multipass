@@ -148,7 +148,9 @@ int main()
     }
     CHECK(FindCeilingSite(nullptr, site) == FindResult::BadImage);
 
-    // Applying changes exactly the ModRM byte, once.
+    // Applying changes exactly the ModRM byte, once. The compiled immediate must stay: it is the bound
+    // the plugin's per-frame structures are sized by, and raising it crashes the plugin at runtime
+    // (Streamline 2.7.2 + DLSSG 310.1.0). The refusal it produces is the safety feature.
     {
         Image img;
         img.putClamp(0x1100, 3);
@@ -170,6 +172,15 @@ int main()
         // Already patched: refused, and the site is no longer found as a clamp.
         CHECK(ApplyCeilingPatch(site) == ApplyResult::Mismatch);
         CHECK(FindCeilingSite(img.data(), site) == FindResult::None);
+    }
+    // A bound already at or above the unlocked maximum gets the same single-byte treatment.
+    {
+        Image img;
+        img.putClamp(0x1100, 5);
+        CHECK(FindCeilingSite(img.data(), site) == FindResult::Found);
+        CHECK(ApplyCeilingPatch(site) == ApplyResult::Patched);
+        CHECK(img.bytes[0x1100 + 1] == 5);
+        CHECK(img.bytes[0x1100 + kModRmOffset] == 0xD2);
     }
     // An empty site never writes.
     {

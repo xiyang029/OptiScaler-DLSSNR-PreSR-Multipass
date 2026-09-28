@@ -244,6 +244,7 @@ bool Config::Reload(std::filesystem::path iniPath)
         {
 #if defined(OPTISCALER_RTX40_MFG)
             FGDLSSGAdaMfgUnlock.set_from_config(readBool("DLSSG", "AdaMfgUnlock"));
+            FGDLSSGBlackwellMfgUnlock.set_from_config(readBool("DLSSG", "BlackwellMfgUnlock"));
 
             if (auto adaFix = readString("DLSSG", "AdaTemporalFix"); adaFix.has_value())
             {
@@ -1145,11 +1146,14 @@ bool Config::SaveIni(std::filesystem::path destination)
     {
 #if defined(OPTISCALER_RTX40_MFG)
         ini.SetValue("DLSSG", "AdaMfgUnlock", GetBoolValue(Instance()->FGDLSSGAdaMfgUnlock.value_for_config()).c_str());
+        ini.SetValue("DLSSG", "BlackwellMfgUnlock",
+                     GetBoolValue(Instance()->FGDLSSGBlackwellMfgUnlock.value_for_config()).c_str());
         ini.SetValue("DLSSG", "AdaTemporalFix", Instance()->FGDLSSGAdaTemporalFix.value_for_config_or("auto").c_str());
         ini.SetValue("DLSSG", "AdaFlipMeteringPatch",
                      GetBoolValue(Instance()->FGDLSSGAdaFlipMeteringPatch.value_for_config()).c_str());
 #else
         ini.Delete("DLSSG", "AdaMfgUnlock");
+        ini.Delete("DLSSG", "BlackwellMfgUnlock");
         ini.Delete("DLSSG", "AdaTemporalFix");
         ini.Delete("DLSSG", "AdaFlipMeteringPatch");
 #endif
