@@ -3735,12 +3735,19 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             ImGui::BeginDisabled(state.dlssgLastSetMode != sl::DLSSGMode::eDynamic);
             static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-            ImGui::SliderFloat("DMFG 目标帧率", &fpsTarget, 0, 200, "%.0f");
+            ImGui::SliderFloat("DMFG 目标帧率", &fpsTarget, 0, 600, "%.0f");
 
-            ShowHelpMarker("0 表示自动检测显示器刷新率");
+            ShowHelpMarker("0~59 自动检测显示器刷新率，60~600直通");
+            if (fpsTarget < 60.0f)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("自动");
+            }
 
             if (ImGui::Button("应用目标##dmfg_selection"))
             {
+                // 0~59 一律按自动处理，配置里只存 0 或 60+。
+                fpsTarget = fpsTarget < 60.0f ? 0.0f : fpsTarget;
                 config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 StreamlineHooks::updateDlssgOptions();
             }
@@ -4525,12 +4532,19 @@ void MenuCommon::RenderFrameGenerationRuntimeSettings(RenderMenuContext& ctx)
 
                 ImGui::BeginDisabled(!config->FGDLSSGForceDMFG.value_or_default());
                 static float fpsTarget = config->FGDLSSGFramerateTargetDMFG.value_or_default();
-                ImGui::SliderFloat("DMFG 目标帧率", &fpsTarget, 0, 200, "%.0f");
+                ImGui::SliderFloat("DMFG 目标帧率", &fpsTarget, 0, 600, "%.0f");
 
-                ShowHelpMarker("0 表示自动检测显示器刷新率");
+                ShowHelpMarker("0~59 自动检测显示器刷新率，60~600直通");
+                if (fpsTarget < 60.0f)
+                {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("自动");
+                }
 
                 if (ImGui::Button("应用目标##dmfg_runtime"))
                 {
+                    // 0~59 一律按自动处理，配置里只存 0 或 60+。
+                    fpsTarget = fpsTarget < 60.0f ? 0.0f : fpsTarget;
                     config->FGDLSSGFramerateTargetDMFG = fpsTarget;
                 }
 

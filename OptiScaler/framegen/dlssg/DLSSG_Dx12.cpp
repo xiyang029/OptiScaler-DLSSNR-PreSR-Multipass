@@ -316,7 +316,8 @@ bool DLSSG_Dx12::Dispatch()
     if (Config::Instance()->FGDLSSGForceDMFG.value_or_default())
     {
         options.mode = sl::DLSSGMode::eDynamic;
-        options.dynamicTargetFrameRate = Config::Instance()->FGDLSSGFramerateTargetDMFG.value_or_default();
+        const auto dmfgTarget = Config::Instance()->FGDLSSGFramerateTargetDMFG.value_or_default();
+        options.dynamicTargetFrameRate = dmfgTarget < 60.0f ? 0.0f : dmfgTarget;
     }
 
     StreamlineHooks::applyMenuDlssgInterlock(options, true);

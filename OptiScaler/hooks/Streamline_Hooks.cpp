@@ -1146,7 +1146,9 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
 
     if (newOptions.mode == sl::DLSSGMode::eDynamic && Config::Instance()->FGDLSSGFramerateTargetDMFG.has_value())
     {
-        newOptions.dynamicTargetFrameRate = Config::Instance()->FGDLSSGFramerateTargetDMFG.value();
+        const auto dmfgTarget = Config::Instance()->FGDLSSGFramerateTargetDMFG.value();
+        // 0~59 一律按显示器刷新率（自动）处理，60+ 直通。菜单应用时已吸附，这里兜住手改 ini。
+        newOptions.dynamicTargetFrameRate = dmfgTarget < 60.0f ? 0.0f : dmfgTarget;
     }
 
     applyMenuDlssgInterlock(newOptions, dlssgPotentiallyActive);
