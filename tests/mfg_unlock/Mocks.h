@@ -38,7 +38,6 @@ struct Config
 };
 enum class VendorId { Nvidia, Other };
 constexpr unsigned NV_GPU_ARCHITECTURE_AD100 = 0x190;
-constexpr unsigned NV_GPU_ARCHITECTURE_GB200 = 0x1b0;
 struct TestGpu
 {
     VendorId vendorId = VendorId::Nvidia;

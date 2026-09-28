@@ -43,35 +43,6 @@ constexpr std::string_view kAdvertisePattern309 = "81 FD B0 01 00 00 0F 8C ? ? ?
 //     setae al
 constexpr std::string_view kValidatePattern309 = "3D B0 01 00 00 0F 93 C0";
 
-// Which card the unlock is talking to. On Ada the gates clamp the count to 1 and the interpolation
-// kernels need the temporal fix; on Blackwell the gates publish 3 (4X) and the module already carries
-// the sm_120 kernels, so only the gates are raised. 0x1b0 -- the constant the snippet compares against
-// -- is NV_GPU_ARCHITECTURE_GB200.
-enum class GpuFamily
-{
-    Other,
-    Ada,
-    Blackwell,
-};
-
-GpuFamily PrimaryGpuFamily()
-{
-    const auto& gpu = IdentifyGpu::getPrimaryGpu();
-
-    if (gpu.vendorId != VendorId::Nvidia)
-        return GpuFamily::Other;
-
-    switch (gpu.nvidiaArchInfo.architecture_id)
-    {
-    case NV_GPU_ARCHITECTURE_AD100:
-        return GpuFamily::Ada;
-    case NV_GPU_ARCHITECTURE_GB200:
-        return GpuFamily::Blackwell;
-    default:
-        return GpuFamily::Other;
-    }
-}
-
 MfgUnlock::Status g_status {};
 std::recursive_mutex g_mutex;
 
@@ -169,18 +140,14 @@ HMODULE FindProvider()
 std::vector<HMODULE> g_plugins;
 std::vector<HMODULE> g_pluginsTried;
 
-// Same guards as TryApply: per-family option on for this session.
-bool UnlockWanted()
+// Same guards as TryApply: the option on for this session, an Ada GPU.
+bool AdaUnlockWanted()
 {
-    switch (PrimaryGpuFamily())
-    {
-    case GpuFamily::Ada:
-        return MfgUnlock::EnabledForSession();
-    case GpuFamily::Blackwell:
-        return MfgUnlock::BlackwellEnabledForSession();
-    default:
+    if (!MfgUnlock::EnabledForSession())
         return false;
-    }
+
+    const auto& gpu = IdentifyGpu::getPrimaryGpu();
+    return gpu.vendorId == VendorId::Nvidia && gpu.nvidiaArchInfo.architecture_id == NV_GPU_ARCHITECTURE_AD100;
 }
 
 // Software frame pacing: pin the plugin's flip-metering state to its own software fallback. Applied when
@@ -219,6 +186,9 @@ void PatchFlipMetering(HMODULE plugin)
     case MfgUnlock::Flip::ApplyResult::Patched:
         g_status.FlipMetering = "patched";
         g_status.FlipSites = static_cast<unsigned int>(plan.sites.size());
+        LOG_INFO("MFG unlock: {}: flip-metering state +0x{:X} pinned to {} at {} site(s); multi-frame should pace in "
+                 "software",
+                 pluginPath, plan.field, plan.value, plan.sites.size());
         break;
     case MfgUnlock::Flip::ApplyResult::Mismatch:
         g_status.FlipMetering = "the plugin changed while it was being patched";
@@ -263,8 +233,8 @@ void PatchPluginCeilings()
             {
             case MfgUnlock::Plugin::ApplyResult::Patched:
                 result = "patched";
-                if (g_status.PluginBound == 0 || site.compiled < g_status.PluginBound)
-                    g_status.PluginBound = site.compiled;
+                LOG_INFO("MFG unlock: {}: frame-count clamp neutralised, compiled maximum {} generated frame(s)",
+                         pluginPath, site.compiled);
                 break;
             case MfgUnlock::Plugin::ApplyResult::ProtectFailed:
                 result = "not writable";
@@ -309,6 +279,17 @@ bool WriteBytes(uintptr_t address, const uint8_t* bytes, size_t count)
     return true;
 }
 
+std::string Hex(const uint8_t* bytes, size_t count)
+{
+    std::string out;
+
+    for (size_t i = 0; i < count; ++i)
+        out += std::format("{}{:02X}", i == 0 ? "" : " ", bytes[i]);
+
+    return out;
+}
+
+// Rewrites count and neutralises the architecture clamp, so MultiFrameCountMax is published as five.
 bool PatchAdvertise(HMODULE module)
 {
     if (const auto at309 = UniqueAddress(module, kAdvertisePattern309); at309 != 0)
@@ -316,13 +297,20 @@ bool PatchAdvertise(HMODULE module)
         // The jl is a rel32, six bytes.
         const auto branchAt = at309 + 6;
         const uint8_t nop[] = { 0x0F, 0x1F, 0x44, 0x00, 0x00, 0x90 };
+
+        LOG_INFO("MFG unlock: advertise (310.9) at {:X}, jl {} -> {}", at309,
+                 Hex((const uint8_t*) branchAt, sizeof(nop)), Hex(nop, sizeof(nop)));
+
         return WriteBytes(branchAt, nop, sizeof(nop));
     }
 
     const auto address = UniqueAddress(module, kAdvertisePattern);
 
     if (address == 0)
+    {
+        LOG_WARN("MFG unlock: the advertise signature did not match, nvngx_dlssg.dll left alone");
         return false;
+    }
 
     // Offsets within the matched sequence: the r8d immediate, and the cmovl.
     const auto countAt = address + 7;
@@ -330,6 +318,10 @@ bool PatchAdvertise(HMODULE module)
 
     const uint8_t count[] = { kMaxGeneratedFrames };
     const uint8_t nop[] = { 0x0F, 0x1F, 0x40, 0x00 };
+
+    LOG_INFO("MFG unlock: advertise at {:X}, count {} -> {}, cmovl {} -> {}", address, *(const uint8_t*) countAt,
+             kMaxGeneratedFrames, Hex((const uint8_t*) cmovAt, sizeof(nop)), Hex(nop, sizeof(nop)));
+
     return WriteBytes(countAt, count, sizeof(count)) && WriteBytes(cmovAt, nop, sizeof(nop));
 }
 
@@ -341,13 +333,20 @@ bool PatchValidate(HMODULE module)
         // setae al -> mov al, 1, so the flag is set whatever the architecture reports.
         const auto setAt = at309 + 5;
         const uint8_t always[] = { 0xB0, 0x01, 0x90 };
+
+        LOG_INFO("MFG unlock: validate (310.9) at {:X}, setae {} -> {}", at309,
+                 Hex((const uint8_t*) setAt, sizeof(always)), Hex(always, sizeof(always)));
+
         return WriteBytes(setAt, always, sizeof(always));
     }
 
     const auto address = UniqueAddress(module, kValidatePattern);
 
     if (address == 0)
+    {
+        LOG_WARN("MFG unlock: the validate signature did not match, nvngx_dlssg.dll left alone");
         return false;
+    }
 
     // Offsets within the matched sequence: the jl, and the immediate of the count test behind it.
     const auto branchAt = address + 5;
@@ -355,6 +354,11 @@ bool PatchValidate(HMODULE module)
 
     const uint8_t nop[] = { 0x90, 0x90 };
     const uint8_t count[] = { kMaxGeneratedFrames };
+
+    LOG_INFO("MFG unlock: validate at {:X}, jl {} -> {}, count {} -> {}", address,
+             Hex((const uint8_t*) branchAt, sizeof(nop)), Hex(nop, sizeof(nop)), *(const uint8_t*) countAt,
+             kMaxGeneratedFrames);
+
     return WriteBytes(branchAt, nop, sizeof(nop)) && WriteBytes(countAt, count, sizeof(count));
 }
 
@@ -485,36 +489,15 @@ unsigned int RewriteBlackwellKernels(HMODULE module)
         }
     }
 
+    LOG_INFO("MFG unlock: {} kernel containers answer Ada with the Blackwell image", rewritten);
+
     return rewritten;
-}
-
-// Ada时序修复，返回是否改写了内核，无改写则调用方不动数量门控。
-bool ApplyTemporalFix(HMODULE module)
-{
-    const auto method = MfgUnlock::ConfiguredTemporalMethod();
-    g_status.TemporalAttempted = method;
-
-    if (method == MfgUnlock::TemporalMethod::Retarget)
-    {
-        g_status.KernelsRewritten = RewriteBlackwellKernels(module);
-        g_status.TemporalDetail = g_status.KernelsRewritten > 0 ? "reused the Blackwell interpolation kernel"
-                                                                : "no compatible Blackwell interpolation kernel image";
-    }
-    else
-    {
-        MfgUnlock::Ptx::Result ptx;
-        MfgUnlock::Ptx::Apply(module, ptx);
-        g_status.KernelsRewritten = static_cast<unsigned int>(ptx.redirected);
-        g_status.TemporalDetail = ptx.detail;
-    }
-
-    return g_status.KernelsRewritten > 0;
 }
 } // namespace
 
 void MfgUnlock::TryApply(HMODULE requestedModule)
 {
-    if (!UnlockWanted())
+    if (!AdaUnlockWanted())
         return;
 
     std::lock_guard lock(g_mutex);
@@ -530,25 +513,62 @@ void MfgUnlock::TryApply(HMODULE requestedModule)
             g_status.ModuleFound = true;
             g_status.SnippetVersion = ModuleVersion(module);
 
+            wchar_t modulePath[MAX_PATH] {};
+            GetModuleFileNameW(module, modulePath, MAX_PATH);
+            LOG_INFO("MFG unlock: DLSS-G provider {} at {}", g_status.SnippetVersion, wstring_to_string(modulePath));
+
             // Validate both gates before touching either. Ambiguous/unknown versions remain unmodified.
             const bool knownGates =
                 (UniqueAddress(module, kAdvertisePattern309) && UniqueAddress(module, kValidatePattern309)) ||
                 (UniqueAddress(module, kAdvertisePattern) && UniqueAddress(module, kValidatePattern));
             if (!knownGates)
-                return;
-
-            if (PrimaryGpuFamily() == GpuFamily::Blackwell)
             {
-                g_status.NativeKernels = true;
-                g_status.TemporalDetail = "Blackwell keeps its own interpolation kernels";
-            }
-            else if (!ApplyTemporalFix(module))
+                LOG_WARN("MFG unlock: unsupported or ambiguous DLSSG {} signatures; left unchanged",
+                         g_status.SnippetVersion);
                 return;
+            }
 
+            // Retargeting and both gates form one feature; a count-only unlock repeats frames. One temporal
+            // method per session, since both edit the same fatbin.
+            const auto method = ConfiguredTemporalMethod();
+            g_status.TemporalAttempted = method;
+
+            if (method == TemporalMethod::Retarget)
+            {
+                g_status.KernelsRewritten = RewriteBlackwellKernels(module);
+
+                g_status.TemporalDetail = g_status.KernelsRewritten > 0
+                                              ? "reused the Blackwell interpolation kernel"
+                                              : "no compatible Blackwell interpolation kernel image";
+            }
+            else
+            {
+                Ptx::Result ptx;
+
+                Ptx::Apply(module, ptx);
+                g_status.KernelsRewritten = static_cast<unsigned int>(ptx.redirected);
+                g_status.TemporalDetail = ptx.detail;
+
+                if (ptx.redirected > 0)
+                    LOG_INFO("MFG unlock: PTX temporal fix: {}", ptx.detail);
+                else
+                    LOG_WARN("MFG unlock: PTX temporal fix not applied: {}", ptx.detail);
+            }
+
+            if (g_status.KernelsRewritten == 0)
+            {
+                LOG_WARN("MFG unlock: no compatible interpolation kernels; frame-count gates left unchanged");
+                return;
+            }
             const bool advertise = PatchAdvertise(module);
             const bool validate = PatchValidate(module);
             g_status.AdvertiseMatched = advertise;
             g_status.ValidateMatched = validate;
+
+            if (advertise && validate)
+                LOG_INFO("MFG unlock: nvngx_dlssg.dll patched for {} generated frames", kMaxGeneratedFrames);
+            else
+                LOG_WARN("MFG unlock: nvngx_dlssg.dll incomplete, advertise {}, validate {}", advertise, validate);
 
             // A plugin that was loaded first has been waiting for this.
             PatchPluginCeilings();
@@ -599,7 +619,7 @@ void MfgUnlock::RecordState(unsigned int presented)
 
 void MfgUnlock::OnStreamlinePluginLoaded(HMODULE plugin)
 {
-    if (plugin == nullptr || !UnlockWanted())
+    if (plugin == nullptr || !AdaUnlockWanted())
         return;
 
     {
@@ -622,43 +642,15 @@ unsigned int MfgUnlock::UnlockedMax()
 {
     const auto& status = LastStatus();
 
-    // Ada needs a rewritten kernel image; Blackwell runs its own.
-    return status.AdvertiseMatched && status.ValidateMatched &&
-                   (status.KernelsRewritten > 0 || status.NativeKernels)
-               ? kMaxGeneratedFrames
-               : 0;
-}
-
-unsigned int MfgUnlock::EffectiveMax()
-{
-    const auto unlocked = UnlockedMax();
-
-    if (unlocked == 0)
-        return 0;
-
-    const auto status = LastStatus();
-
-    // No clamp has been seen yet: nothing is known about the plugin beyond the snippet unlock.
-    if (status.PluginBound == 0)
-        return unlocked;
-
-    return std::min(unlocked, status.PluginBound);
+    return status.AdvertiseMatched && status.ValidateMatched && status.KernelsRewritten > 0 ? kMaxGeneratedFrames : 0;
 }
 
 bool MfgUnlock::Pending()
 {
-    if (LastStatus().ModuleFound)
+    if (!EnabledForSession() || LastStatus().ModuleFound)
         return false;
-
-    switch (PrimaryGpuFamily())
-    {
-    case GpuFamily::Ada:
-        return EnabledForSession();
-    case GpuFamily::Blackwell:
-        return BlackwellEnabledForSession();
-    default:
-        return false;
-    }
+    const auto& gpu = IdentifyGpu::getPrimaryGpu();
+    return gpu.vendorId == VendorId::Nvidia && gpu.nvidiaArchInfo.architecture_id == NV_GPU_ARCHITECTURE_AD100;
 }
 
 MfgUnlock::Status MfgUnlock::LastStatus()
@@ -669,15 +661,8 @@ MfgUnlock::Status MfgUnlock::LastStatus()
 
 bool MfgUnlock::EnabledForSession()
 {
-    // Ada开关，启动时锁存，UI更改下次启动生效。
+    // Latch before the first FG load/query. UI changes take effect on the next launch.
     static const bool enabled = Config::Instance()->FGDLSSGAdaMfgUnlock.value_or_default();
-    return enabled;
-}
-
-bool MfgUnlock::BlackwellEnabledForSession()
-{
-    // 50系开关，启动时锁存，UI更改下次启动生效。
-    static const bool enabled = Config::Instance()->FGDLSSGBlackwellMfgUnlock.value_or_default();
     return enabled;
 }
 

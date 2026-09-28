@@ -101,7 +101,7 @@ bool DLSSG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQue
     {
         _maxInterpolationCount = dlssgState.numFramesToGenerateMax;
 #if defined(OPTISCALER_RTX40_MFG)
-        _maxInterpolationCount = std::max(_maxInterpolationCount, static_cast<int>(MfgUnlock::EffectiveMax()));
+        _maxInterpolationCount = std::max(_maxInterpolationCount, static_cast<int>(MfgUnlock::UnlockedMax()));
 #endif
         LOG_INFO("Max supported interpolations: {}", dlssgState.numFramesToGenerateMax);
 
@@ -185,7 +185,7 @@ bool DLSSG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQu
     {
         _maxInterpolationCount = dlssgState.numFramesToGenerateMax;
 #if defined(OPTISCALER_RTX40_MFG)
-        _maxInterpolationCount = std::max(_maxInterpolationCount, static_cast<int>(MfgUnlock::EffectiveMax()));
+        _maxInterpolationCount = std::max(_maxInterpolationCount, static_cast<int>(MfgUnlock::UnlockedMax()));
 #endif
         LOG_INFO("Max supported interpolations: {}", dlssgState.numFramesToGenerateMax);
 

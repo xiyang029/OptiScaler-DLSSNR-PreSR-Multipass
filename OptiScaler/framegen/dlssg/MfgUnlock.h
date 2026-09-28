@@ -12,7 +12,7 @@
 
 #include <string>
 
-// Multi Frame Generation above 4X on Ada and Blackwell.
+// Multi Frame Generation on Ada.
 //
 // nvngx_dlssg.dll gates MFG on the architecture id reported by the driver: 0x1b0 is Blackwell, Ada
 // is below it. Two sites decide what a card is allowed to do, and both compare against that constant.
@@ -30,7 +30,7 @@
 //       jbe   accept
 //
 // Patched: the count immediates become 5, the cmovl becomes a nop, and the jl becomes two nops. The
-// result is a maximum of five generated frames -- 6X -- on supported Ada and Blackwell GPUs.
+// result is a maximum of five generated frames -- 6X -- on supported Ada GPUs.
 //
 // Memory only. The file on disk carries an Authenticode signature and is left alone.
 //
@@ -41,7 +41,6 @@
 // Ada also runs a different interpolation kernel: Kernel_EstimateIntermMvecsScatter reads three f32
 // fields of its parameter block on sm_120 and one on sm_89, so every generated frame lands at the
 // same point between the two real ones. The Blackwell image is retargeted in place to answer for Ada.
-// Blackwell runs that sm_120 build natively and needs none of this: only its count gates are raised.
 namespace MfgUnlock
 {
 // What the last attempt found. The signatures are version specific by construction -- they carry the
@@ -54,7 +53,6 @@ struct Status
     bool AdvertiseMatched = false;
     bool ValidateMatched = false;
     unsigned int KernelsRewritten = 0; // kernel groups relabelled, or descriptors redirected to the PTX rebuild
-    bool NativeKernels = false; // Blackwell: the module's own sm_120 kernels are kept, only the gates are raised
     TemporalMethod TemporalAttempted = TemporalMethod::None; // what the configuration asked for at load
     std::string TemporalDetail;                              // why the attempt did not land, or what it did
     std::string SnippetVersion; // file version of nvngx_dlssg.dll, empty if it could not be read
@@ -62,9 +60,6 @@ struct Status
     // The Streamline DLSS-G plugin's own frame-count clamp. A string literal, empty until a plugin has
     // been seen, so the overlay can read it while a hook thread writes it.
     const char* PluginCeiling = "";
-
-    // Streamline插件自带生成帧上限，0表示尚未见到 clamp。
-    unsigned int PluginBound = 0;
 
     // Software frame pacing (the flip-metering patch). A string literal like PluginCeiling: empty until a
     // plugin has been seen, "patched", or the reason it was not.
@@ -74,8 +69,7 @@ struct Status
 };
 
 Status LastStatus();
-bool EnabledForSession(); // 40系开关，启动时锁存
-bool BlackwellEnabledForSession(); // 50系开关，启动时锁存
+bool EnabledForSession();
 
 // The method [DLSSG] AdaTemporalFix selects right now: Retarget unless it names Ptx. The overlay compares
 // it with Status::TemporalAttempted to show that a change needs a restart.
@@ -88,9 +82,6 @@ bool Pending();
 
 // The generated frame ceiling the patches opened, or 0 when they did not land.
 unsigned int UnlockedMax();
-
-// 解锁后实际可发送的生成帧上限，插件自带上限封顶，0表示未解锁。
-unsigned int EffectiveMax();
 
 // What the game's own DLSS-G is doing, for the overlay. Written on the game's threads and read by the
 // overlay, so plain atomics. A checkbox proves nothing about MFG: these are the counts Streamline itself

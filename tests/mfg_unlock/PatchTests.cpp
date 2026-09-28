@@ -38,8 +38,7 @@ int main(int argc, char** argv) try
         std::cout << "PASS runtime image patch (simulated Ada; no GPU execution)\n";
         return 0;
     }
-    if (mode == "blackwell" || mode == "blackwell-3109")
-        IdentifyGpu::gpu.nvidiaArchInfo.architecture_id = NV_GPU_ARCHITECTURE_GB200;
+    if (mode == "blackwell") IdentifyGpu::gpu.nvidiaArchInfo.architecture_id = 0x1b0;
     if (mode == "ampere") IdentifyGpu::gpu.nvidiaArchInfo.architecture_id = 0x170;
     if (mode == "other-vendor") IdentifyGpu::gpu.vendorId = VendorId::Other;
     if (mode == "restart")
@@ -62,7 +61,7 @@ int main(int argc, char** argv) try
     sections[0].VirtualAddress = 0x1000; sections[0].Misc.VirtualSize = 0x1000;
     sections[0].Characteristics = IMAGE_SCN_MEM_EXECUTE;
     sections[1].VirtualAddress = 0x3000; sections[1].Misc.VirtualSize = 0x1000;
-    const bool newer = mode == "3109" || mode == "blackwell-3109";
+    const bool newer = mode == "3109";
     Pattern(memory + 0x1100, newer ? kAdvertisePattern309 : kAdvertisePattern);
     if (mode != "missing-gate") Pattern(memory + 0x1200, newer ? kValidatePattern309 : kValidatePattern);
     if (mode == "duplicate-gate") Pattern(memory + 0x1300, kAdvertisePattern);
@@ -84,26 +83,13 @@ int main(int argc, char** argv) try
     const std::vector<uint8_t> before(memory, memory + 0x5000);
     auto module = reinterpret_cast<HMODULE>(memory);
     MfgUnlock::TryApply(module);
-    const bool blackwellCase = mode == "blackwell" || mode == "blackwell-3109";
-    const bool shouldPatch = mode == "legacy" || mode == "3109" || blackwellCase;
+    const bool shouldPatch = mode == "legacy" || mode == "3109";
     if (shouldPatch)
     {
         Expect(MfgUnlock::UnlockedMax() == 5, "Maximum must require successful kernels and both gates");
-        if (blackwellCase)
-        {
-            // Blackwell keeps its own sm_120 kernels; only the count gates move.
-            Expect(Read<uint32_t>(ada + 28) == 89 && Read<uint32_t>(blackwell + 28) == 120,
-                   "Blackwell kernels must stay untouched");
-            Expect(std::memcmp(blackwell + 32, ".target sm_120", 14) == 0, "Blackwell PTX target was rewritten");
-            const auto status = MfgUnlock::LastStatus();
-            Expect(status.KernelsRewritten == 0 && status.NativeKernels, "Blackwell case must run gate-only");
-        }
-        else
-        {
-            Expect(Read<uint32_t>(ada + 28) == 122 && Read<uint32_t>(blackwell + 28) == 89, "Wrong kernel routing");
-            Expect(std::memcmp(blackwell + 32, ".target sm_89 ", 14) == 0, "PTX target was not retargeted");
-            Expect(MfgUnlock::LastStatus().KernelsRewritten == 1, "Wrong kernel count");
-        }
+        Expect(Read<uint32_t>(ada + 28) == 122 && Read<uint32_t>(blackwell + 28) == 89, "Wrong kernel routing");
+        Expect(std::memcmp(blackwell + 32, ".target sm_89 ", 14) == 0, "PTX target was not retargeted");
+        Expect(MfgUnlock::LastStatus().KernelsRewritten == 1, "Wrong kernel count");
         if (newer)
             Expect(memory[0x1106] == 0x0f && memory[0x1107] == 0x1f && memory[0x1205] == 0xb0, "310.9 gates");
         else

@@ -748,7 +748,6 @@ class Config
     // DLSSG
 #if defined(OPTISCALER_RTX40_MFG)
     CustomOptional<bool> FGDLSSGAdaMfgUnlock { false };           // RTX 40 only; restart required
-    CustomOptional<bool> FGDLSSGBlackwellMfgUnlock { false };      // RTX 50 only; restart required
     CustomOptional<std::string, NoDefault> FGDLSSGAdaTemporalFix; // Auto / Retarget / Ptx
     CustomOptional<bool> FGDLSSGAdaFlipMeteringPatch { false };   // pin sl.dlss_g to software frame pacing
 #endif

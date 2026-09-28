@@ -3221,7 +3221,9 @@ void MenuCommon::RenderActiveUpscalerSettings(RenderMenuContext& ctx)
 }
 
 #if defined(OPTISCALER_RTX40_MFG)
-// 40系解锁选项，Ada独占。
+// Options for the built-in RTX 40 unlock, shown only while it is on and not overridden by another
+// unlocker. Startup settings: they apply when DLSSG loads, so a change needs a restart, and the result of
+// each is shown directly under it.
 static void RenderAdaUnlockOptions(Config* config, const MfgUnlock::Status& status, void (*showHelp)(const char*))
 {
     if (!ImGui::CollapsingHeader("RTX 40 (Ada) MFG 解锁选项"))
@@ -3353,7 +3355,6 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     auto& primaryGpu = *ctx.primaryGpu;
 
 #if defined(OPTISCALER_RTX40_MFG)
-    // 40系独占解锁复选框，Ada门控。
     const bool adaEnabledForSession = MfgUnlock::EnabledForSession();
     bool adaUnlock = config->FGDLSSGAdaMfgUnlock.value_or_default();
     const bool isAda = primaryGpu.vendorId == VendorId::Nvidia &&
@@ -3362,7 +3363,8 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
     if (ImGui::Checkbox("RTX 40 MFG 解锁 (需重启)", &adaUnlock))
         config->FGDLSSGAdaMfgUnlock = adaUnlock;
     ImGui::EndDisabled();
-    ShowHelpMarker("实验性。保存设置并重启。需要支持的 DLSSG 运行时。\n请勿与其他 MFG 解锁器混用。");
+    ShowHelpMarker("实验性。保存设置并重启。需要支持的 DLSSG 运行时。"
+                   "\n请勿与其他 MFG 解锁器混用。");
     if (isAda && (adaUnlock || adaEnabledForSession))
     {
         const auto status = MfgUnlock::LastStatus();
@@ -3370,10 +3372,13 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
             ImGui::TextWrapped("保存设置并重启以应用此更改。");
         else if (!status.ModuleFound)
             ImGui::TextWrapped("等待 DLSSG 加载。");
-        else if (MfgUnlock::UnlockedMax() > 0)
-            ImGui::TextWrapped("DLSSG %s: MFG 解锁已应用。", status.SnippetVersion.c_str());
+        else if (status.AdvertiseMatched && status.ValidateMatched && status.KernelsRewritten)
+            ImGui::TextWrapped("DLSSG %s: RTX 40 MFG 解锁已应用。", status.SnippetVersion.c_str());
         else
             ImGui::TextWrapped("DLSSG %s: 当前运行时不支持解锁。", status.SnippetVersion.c_str());
+
+        if (status.ModuleFound && status.PluginCeiling[0] != '\0')
+            ImGui::TextWrapped("Streamline 插件上限: %s。", status.PluginCeiling);
 
         RenderAdaUnlockOptions(config, status, [](const char* tip) { ShowHelpMarker(tip); });
     }
@@ -3654,25 +3659,6 @@ void MenuCommon::RenderFrameGenerationSelection(RenderMenuContext& ctx)
 
             if (maxInterpolationCount >= 1)
             {
-#if defined(OPTISCALER_RTX40_MFG)
-                // 50系解锁，和上面40系同样式。SL版本不足、非50系、游戏原生已支持5X/6X时禁用。
-                const bool isBlackwell = primaryGpu.vendorId == VendorId::Nvidia &&
-                                         primaryGpu.nvidiaArchInfo.architecture_id == NV_GPU_ARCHITECTURE_GB200;
-                const bool slEnough = state.streamlineVersion >= feature_version { 2, 7, 1 };
-                const bool nativeMfg = MfgUnlock::UnlockedMax() == 0 && maxInterpolationCount >= 5;
-                bool bwUnlock = config->FGDLSSGBlackwellMfgUnlock.value_or_default();
-                ImGui::BeginDisabled(!isBlackwell || !slEnough || nativeMfg);
-                if (ImGui::Checkbox("50系解锁5X/6X (需重启)##bw", &bwUnlock))
-                    config->FGDLSSGBlackwellMfgUnlock = bwUnlock;
-                ImGui::EndDisabled();
-                if (!slEnough)
-                    ShowHelpMarker("需要 Streamline 2.7.1+。");
-                else if (nativeMfg)
-                    ShowHelpMarker("游戏原生已支持 5X/6X，无需解锁。");
-                else
-                    ShowHelpMarker("实验性。保存设置并重启。需要支持的 DLSSG 运行时。");
-                ImGui::SameLine(0.0f, 16.0f);
-#endif
                 // Map config value to UI index
                 int currentSet = 0;
                 if (config->FGDLSSGOverrideInterpolationCount.has_value())

@@ -1157,7 +1157,7 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
     {
 #if defined(OPTISCALER_RTX40_MFG)
         MfgUnlock::TryApply();
-        if (const auto maximum = MfgUnlock::EffectiveMax(); maximum > 0)
+        if (const auto maximum = MfgUnlock::UnlockedMax(); maximum > 0)
             state.dlssgMfgMax = std::max(state.dlssgMfgMax.value_or(0), static_cast<int>(maximum));
 #endif
 
@@ -1193,22 +1193,7 @@ sl::Result StreamlineHooks::hkslDLSSGSetOptions(const sl::ViewportHandle& viewpo
         {
             auto overrideCount = Config::Instance()->FGDLSSGOverrideInterpolationCount.value();
             if (overrideCount != 0)
-            {
-#if defined(OPTISCALER_RTX40_MFG)
-                if (const auto effective = MfgUnlock::EffectiveMax(); effective > 0 && overrideCount > effective)
-                {
-                    static bool warnedBound = false;
-                    if (!warnedBound)
-                    {
-                        warnedBound = true;
-                        LOG_WARN("Interpolation count override {}X reduced to {}X: plugin hard bound.", overrideCount + 1,
-                                 effective + 1);
-                    }
-                    overrideCount = effective;
-                }
-#endif
                 newOptions.numFramesToGenerate = overrideCount;
-            }
             else if (!enableDynamicMode)
                 newOptions.mode = sl::DLSSGMode::eOff;
         }
@@ -1301,7 +1286,7 @@ sl::Result StreamlineHooks::hkslDLSSGGetState(const sl::ViewportHandle& viewport
 #if defined(OPTISCALER_RTX40_MFG)
     // Version 1 has no maximum-count field: retain its ABI boundary.
     if (originalStructVersion >= 2)
-        state.numFramesToGenerateMax = std::max(state.numFramesToGenerateMax, MfgUnlock::EffectiveMax());
+        state.numFramesToGenerateMax = std::max(state.numFramesToGenerateMax, MfgUnlock::UnlockedMax());
 #endif
 
     if (!State::Instance().dlssgGameDMFGSupported)
@@ -1311,7 +1296,7 @@ sl::Result StreamlineHooks::hkslDLSSGGetState(const sl::ViewportHandle& viewport
 
     auto& optiState = State::Instance();
 #if defined(OPTISCALER_RTX40_MFG)
-    if (const auto maximum = MfgUnlock::EffectiveMax(); maximum > 0)
+    if (const auto maximum = MfgUnlock::UnlockedMax(); maximum > 0)
         optiState.dlssgMfgMax = std::max(optiState.dlssgMfgMax.value_or(0), static_cast<int>(maximum));
 #endif
 
