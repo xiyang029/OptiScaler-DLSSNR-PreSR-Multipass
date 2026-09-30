@@ -302,6 +302,13 @@ void IFGFeature::ResetCounters() { _targetFrame = _frameCount; }
 
 void IFGFeature::UpdateTarget()
 {
+    // Debounce: repeated triggers inside one pause window must not push the
+    // resume point further out (pause storm tanks 1% low). One 10-frame pause
+    // already covers merged fg/sc changes. Strictly-greater keeps
+    // ResetCounters (_targetFrame == _frameCount) able to start a new pause.
+    if (_targetFrame != 0 && _targetFrame > _frameCount)
+        return;
+
     _targetFrame = _frameCount + 10;
     //_lastDispatchedFrame = 0;
     LOG_DEBUG("Current frame: {} target frame: {}", _frameCount, _targetFrame);

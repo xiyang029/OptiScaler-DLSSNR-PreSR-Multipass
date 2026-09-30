@@ -4,7 +4,8 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
     [string]$Version = 'nr-dev',
     [switch]$SkipBuild,
-    [switch]$EnableRtx40Mfg
+    [switch]$EnableRtx40Mfg,
+    [string]$PlatformToolset = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +25,12 @@ if (-not $SkipBuild) {
         }
     }
     if (-not $msbuild) { throw 'MSBuild.exe was not found. Use a Visual Studio developer PowerShell.' }
-    & $msbuild (Join-Path $root 'OptiScaler.sln') /p:Configuration=Release /p:Platform=x64 /p:PostBuildEventUseInBuild=false "/p:OptiScalerRtx40Mfg=$($EnableRtx40Mfg.IsPresent.ToString().ToLowerInvariant())" /v:minimal /m
+    $buildArgs = @((Join-Path $root 'OptiScaler.sln'), '/p:Configuration=Release', '/p:Platform=x64',
+                   '/p:PostBuildEventUseInBuild=false',
+                   "/p:OptiScalerRtx40Mfg=$($EnableRtx40Mfg.IsPresent.ToString().ToLowerInvariant())",
+                   '/v:minimal', '/m')
+    if ($PlatformToolset -ne '') { $buildArgs += "/p:PlatformToolset=$PlatformToolset" }
+    & $msbuild @buildArgs
     if ($LASTEXITCODE -ne 0) { throw 'OptiScaler build failed.' }
 }
 
@@ -32,7 +38,10 @@ $buildFolder = if ($EnableRtx40Mfg) { 'x64/Release-RTX40-MFG' } else { 'x64/Rele
 $buildRoot = Join-Path $root $buildFolder
 # Also reject a stale/wrong-flavour DLL when using -SkipBuild.
 $dllText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $buildRoot 'OptiScaler.dll')))
-$hasUnlock = $dllText.Contains('RTX 40 MFG unlock (restart)')
+# Marker must be ASCII-only (the DLL is scanned with ASCII decoding) and present
+# only in unlock builds: MfgUnlock.cpp is excluded from standard builds, while
+# the overlay checkbox label is Chinese since the Fluent2 UI translation.
+$hasUnlock = $dllText.Contains('MFG unlock: ')
 if ($hasUnlock -ne $EnableRtx40Mfg.IsPresent) { throw 'DLL RTX 40 MFG feature does not match the requested package.' }
 # Validate every source before creating the staging tree. An explicit manifest prevents stale
 # Streamline/MFG, removed NR helpers or discarded experiment files entering this package.

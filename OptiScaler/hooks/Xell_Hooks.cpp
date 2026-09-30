@@ -69,18 +69,34 @@ bool XellHooks::canLimit() { return gamesContextCanLimitFps; }
 // only DX12
 bool XellHooks::update()
 {
-    if (!o_xellGetSleepMode || !o_xellSetSleepMode || blockExternal || gamesContext == nullptr)
+    if (!o_xellGetSleepMode || !o_xellSetSleepMode || blockExternal)
+        return false;
+
+    // 游戏 context 优先；fakenvapi 强制 XeLL 时只有自建 context，用它做限帧器，
+    // 此时 FrameLimit::sleep 会被 canLimit 跳过，限帧源唯一归 XeLL。
+    xell_context_handle_t target = gamesContext != nullptr ? gamesContext : ourContext;
+
+    if (target == nullptr)
         return false;
 
     xell_sleep_params_t currentParams;
-    o_xellGetSleepMode(gamesContext, &currentParams);
+    o_xellGetSleepMode(target, &currentParams);
 
     if (!currentParams.bLowLatencyMode)
         return false;
 
     gamesContextCanLimitFps = true;
 
+    // 目标切换（游戏后建 context）时强制同步一次，避免沿用旧目标的限帧值。
     static float lastFpslimit = 0.0f;
+    static xell_context_handle_t lastTarget = nullptr;
+
+    if (target != lastTarget)
+    {
+        lastTarget = target;
+        lastFpslimit = -1.0f;
+    }
+
     if (lastFpslimit == Config::Instance()->FramerateLimit.value_or_default())
         return false;
     lastFpslimit = Config::Instance()->FramerateLimit.value_or_default();
@@ -89,7 +105,7 @@ bool XellHooks::update()
     else
         currentParams.minimumIntervalUs = static_cast<uint32_t>(std::round(1'000'000 / lastFpslimit));
 
-    return o_xellSetSleepMode(gamesContext, &currentParams) == XELL_RESULT_SUCCESS;
+    return o_xellSetSleepMode(target, &currentParams) == XELL_RESULT_SUCCESS;
 }
 
 xell_result_t XellHooks::hkxellDestroyContext(xell_context_handle_t context)

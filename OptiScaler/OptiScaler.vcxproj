@@ -134,6 +134,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -153,6 +154,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -174,6 +176,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -196,7 +199,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName).pch</PrecompiledHeaderOutputFile>
-      <AdditionalOptions>/w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /w34996 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -231,7 +234,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
-      <AdditionalOptions>/w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /w34996 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -284,7 +287,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
       <PrecompiledHeader>Use</PrecompiledHeader>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalOptions>/w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /w34996 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -317,8 +320,7 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     </ClCompile>
   </ItemDefinitionGroup>
   <Target Name="ValidateRtx40MfgFlag" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(OptiScalerRtx40Mfg)'!='true' and '$(OptiScalerRtx40Mfg)'!='false'"
-           Text="OptiScalerRtx40Mfg must be true or false." />
+    <Error Condition="'$(OptiScalerRtx40Mfg)'!='true' and '$(OptiScalerRtx40Mfg)'!='false'" Text="OptiScalerRtx40Mfg must be true or false." />
   </Target>
   <ItemGroup>
     <ClCompile Include="dlssnr\DlssNr_CompatibilityRuntime.cpp" />
@@ -524,6 +526,9 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
     <ClInclude Include="proxies\Kernel32_Proxy.h" />
     <ClInclude Include="proxies\KernelBase_Proxy.h" />
     <ClInclude Include="proxies\XeFG_Proxy.h" />
+    <ClInclude Include="proxies\XeFGUnlock.h" />
+    <ClInclude Include="proxies\XeFGPacing.h" />
+    <ClInclude Include="proxies\XeLLUnLock.h" />
     <ClInclude Include="proxies\XeLL_Proxy.h" />
     <ClInclude Include="proxies\Ntdll_Proxy.h" />
     <ClInclude Include="resource_tracking\ResTrack_dx11.h" />

@@ -703,14 +703,29 @@ class Config
     CustomOptional<bool> FSRFGEnableWatermark { false };
 
     // XeFG
+    // Ceiling for the XeFG MFG path, in interpolations: 9 is a 10X multiplier.
+    // One number decides what the unlock patches report to the provider as
+    // maxSupportedInterpolations, what the menu offers, and what the ini may
+    // ask for. Ported from Coldwood1026/OptiScalerDp4aUnlock (U1-U5 + XeLL).
+    static constexpr int32_t XeFGMaxInterpolations = 9;
+
     CustomOptional<bool> FGXeFGIgnoreInitChecks { false };
     CustomOptional<int> FGXeFGInterpolationCount { 1 };
+    CustomOptional<bool> FGXeFGUnlockEnabled { true };
+    CustomOptional<int> FGXeFGMaxInterpolatedFrames { XeFGMaxInterpolations };
+    CustomOptional<bool> FGXeFGExtraPacing { true };
+    // XeLL 低延迟加速：睡眠更激进，降延迟但部分场景 pacing 变抖。默认关。
+    CustomOptional<bool> FGXeFGLowLatencyBoost { false };
     CustomOptional<bool> FGXeFGUIComposition { false };
     CustomOptional<bool> FGXeFGDepthInverted { true };
     CustomOptional<bool> FGXeFGJitteredMV { false };
     CustomOptional<bool> FGXeFGHighResMV { false };
     CustomOptional<bool> FGXeFGDebugView { false };
     CustomOptional<bool> FGXeFGForceBorderless { false };
+    // FG（重）激活后首 burst 自动重置历史。关则只信游戏重置信号。
+    CustomOptional<bool> FGXeFGAutoReset { true };
+    // 切镜自检测命中时重置历史（只比旋转块+命中冷却）。关则转视角永不自发 reset。
+    CustomOptional<bool> FGXeFGCutReset { true };
 
     // DLSSG
 #if defined(OPTISCALER_RTX40_MFG)

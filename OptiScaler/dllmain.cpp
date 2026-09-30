@@ -1782,7 +1782,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         exeModule = GetModuleHandle(nullptr);
         processId = GetCurrentProcessId();
 
-        // Main Opti DLL path
+        // Main Opti DLL path is fixed to the "OptiScaler" folder next to the OptiScaler DLL itself.
+        // Absolute MainDllPath from ini is still honored; relative paths never resolve against exepath.
         if (!Config::Instance()->MainDllPath.has_value())
         {
             Config::Instance()->MainDllPath.set_volatile_value(L"OptiScaler");
@@ -1790,14 +1791,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         if (std::filesystem::path mainDllPath(Config::Instance()->MainDllPath.value()); mainDllPath.is_relative())
         {
-            Config::Instance()->MainDllPath.set_volatile_value(Util::ExePath().parent_path() / mainDllPath);
+            Config::Instance()->MainDllPath.set_volatile_value(Util::DllPath().parent_path() / mainDllPath);
         }
 
-        // If path is invalid or doesn't exist, use the exe folder as main
+        // If path is invalid or doesn't exist, use the dll folder as main
         if (!std::filesystem::exists(Config::Instance()->MainDllPath.value()) ||
             !std::filesystem::is_directory(Config::Instance()->MainDllPath.value()))
         {
-            Config::Instance()->MainDllPath.set_volatile_value(Util::ExePath().parent_path());
+            Config::Instance()->MainDllPath.set_volatile_value(Util::DllPath().parent_path());
         }
 
         // Clean up path

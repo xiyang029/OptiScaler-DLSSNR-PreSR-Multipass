@@ -8,6 +8,7 @@
 #include <resource_tracking/ResTrack_dx12.h>
 
 #include <nvapi/fakenvapi.h>
+#include <proxies/XeFGPacing.h>
 
 #include <magic_enum.hpp>
 
@@ -76,8 +77,14 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         {
             xell_sleep_params_t sleepParams = {};
             sleepParams.bLowLatencyMode = true;
-            sleepParams.bLowLatencyBoost = false;
-            sleepParams.minimumIntervalUs = 0;
+            sleepParams.bLowLatencyBoost = Config::Instance()->FGXeFGLowLatencyBoost.value_or_default();
+            // Seed XeLL pacing from the configured frame limit. XellHooks::update()
+            // only syncs the *game's* context, so our own context would otherwise
+            // stay unlimited (0) forever. FramerateLimit <= 0 keeps 0: unchanged.
+            if (const float fpsCap = Config::Instance()->FramerateLimit.value_or_default(); fpsCap > 0.0f)
+                sleepParams.minimumIntervalUs = static_cast<uint32_t>(std::round(1000000.0f / fpsCap));
+            else
+                sleepParams.minimumIntervalUs = 0;
 
             auto xellResult =
                 XeLLProxy::SetSleepMode()((xell_context_handle_t) fakenvapi::getCurrentContext(), &sleepParams);
@@ -103,8 +110,12 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
 
             xell_sleep_params_t sleepParams = {};
             sleepParams.bLowLatencyMode = true;
-            sleepParams.bLowLatencyBoost = false;
-            sleepParams.minimumIntervalUs = 0;
+            sleepParams.bLowLatencyBoost = Config::Instance()->FGXeFGLowLatencyBoost.value_or_default();
+            // Same seeding as the fakenvapi branch above (see comment there).
+            if (const float fpsCap = Config::Instance()->FramerateLimit.value_or_default(); fpsCap > 0.0f)
+                sleepParams.minimumIntervalUs = static_cast<uint32_t>(std::round(1000000.0f / fpsCap));
+            else
+                sleepParams.minimumIntervalUs = 0;
 
             auto xellResult = InputXeLL::SetSleepMode(localXellContext, &sleepParams);
             if (xellResult != XELL_RESULT_SUCCESS)
@@ -126,6 +137,21 @@ bool XeFG_Dx12::CreateSwapchainContext(ID3D12Device* device)
         {
             LOG_ERROR("Couldn't create XeLL");
             return false;
+        }
+
+        // FG/XeLL ceiling check: both DLLs gate the multiplier independently
+        // (FG reports it, XeLL validates it). FG unlocked past 4X while XeLL
+        // still clamps at its stock ceiling is guaranteed judder - surface it
+        // here instead of leaving it as mystery stutter.
+        {
+            const int32_t wantInterp = Config::Instance()->FGXeFGMaxInterpolatedFrames.value_or_default();
+
+            if (wantInterp > 3 && XeFGUnlock::Applied() && !XeLLUnlock::Applied())
+            {
+                LOG_WARN("XeFG/XeLL ceiling mismatch: FG unlocked to {}X but the XeLL unlock did not apply "
+                         "(unrecognised libxell.dll build?); expect judder above 4X",
+                         wantInterp + 1);
+            }
         }
 
         createResult = true;
@@ -366,7 +392,12 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
 
     xefg_swapchain_d3d12_init_params_t params {};
 
-    int intTarget = _maxInterpolationCount;
+    // Start at the user's count instead of the provider ceiling: less startup
+    // latency, no extra toggle to converge. Clamped to what the provider reports.
+    int intTarget = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
+
+    if (intTarget > _maxInterpolationCount)
+        intTarget = _maxInterpolationCount;
 
     // For old libxess_fg versions we use max to control interpolation count
     if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
@@ -382,10 +413,10 @@ bool XeFG_Dx12::CreateSwapchain(IDXGIFactory* factory, ID3D12CommandQueue* cmdQu
     if (_framesToInterpolate > intTarget)
         Config::Instance()->FGXeFGInterpolationCount.set_volatile_value(intTarget);
 
-    if (Config::Instance()->ForceXeLL.value_or_default())
-        params.maxInterpolatedFrames = 1;
-
-    params.maxInterpolatedFrames = intTarget;
+    // ForceXeLL means latency-only: keep FG off the init path instead of
+    // having the next line silently overwrite maxInterpolatedFrames = 1.
+    params.maxInterpolatedFrames =
+        Config::Instance()->ForceXeLL.value_or_default() ? 1 : intTarget;
 
     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
 
@@ -533,7 +564,12 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
 
     xefg_swapchain_d3d12_init_params_t params {};
 
-    int intTarget = _maxInterpolationCount;
+    // Start at the user's count instead of the provider ceiling: less startup
+    // latency, no extra toggle to converge. Clamped to what the provider reports.
+    int intTarget = Config::Instance()->FGXeFGInterpolationCount.value_or_default();
+
+    if (intTarget > _maxInterpolationCount)
+        intTarget = _maxInterpolationCount;
 
     // For old libxess_fg versions we use max to control interpolation count
     if (XeFGProxy::SetNumInterpolatedFrames() == nullptr)
@@ -549,10 +585,10 @@ bool XeFG_Dx12::CreateSwapchain1(IDXGIFactory* factory, ID3D12CommandQueue* cmdQ
     if (_framesToInterpolate > intTarget)
         Config::Instance()->FGXeFGInterpolationCount.set_volatile_value(intTarget);
 
-    if (Config::Instance()->ForceXeLL.value_or_default())
-        params.maxInterpolatedFrames = 1;
-
-    params.maxInterpolatedFrames = intTarget;
+    // ForceXeLL means latency-only: keep FG off the init path instead of
+    // having the next line silently overwrite maxInterpolatedFrames = 1.
+    params.maxInterpolatedFrames =
+        Config::Instance()->ForceXeLL.value_or_default() ? 1 : intTarget;
 
     params.initFlags = XEFG_SWAPCHAIN_INIT_FLAG_NONE;
 
@@ -659,6 +695,12 @@ void XeFG_Dx12::Activate()
         {
             _isActive = true;
             _lastDispatchedFrame = 0;
+
+            // Fresh history for the new session: stale frames from before the
+            // pause must not seed the first bursts (teleport smear).
+            _forceResetNext = true;
+            _hasPrevViewMatrix = false;
+            _cutCooldown = 0;
         }
 
         LOG_INFO("SetEnabled: true, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
@@ -703,6 +745,10 @@ void XeFG_Dx12::Deactivate()
         //_lastDispatchedFrame = 0;
         _waitingNewFrameData = false;
 
+        // Drop the feed baseline so the next activation re-baselines instead
+        // of slew-clamping a heavier scene against a stale value.
+        _lastFedFrameTimeMs = 0.0f;
+
         LOG_INFO("SetEnabled: false, result: {} ({})", magic_enum::enum_name(result), (UINT) result);
     }
 }
@@ -744,7 +790,7 @@ bool XeFG_Dx12::Dispatch()
     if (!IsActive() || IsPaused())
         return false;
 
-    LOG_DEBUG("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
+    LOG_DEBUG_ONLY("_frameCount: {}, willDispatchFrame: {}, fIndex: {}", _frameCount, willDispatchFrame, fIndex);
 
     if (!_resourceReady[fIndex].contains(FG_ResourceType::Depth) ||
         !_resourceReady[fIndex].at(FG_ResourceType::Depth) ||
@@ -876,6 +922,8 @@ bool XeFG_Dx12::Dispatch()
 
     xefg_swapchain_frame_constant_data_t constData = {};
 
+    bool viewValid = false;
+
     if (_cameraPosition[fIndex][0] != 0.0f || _cameraPosition[fIndex][1] != 0.0f || _cameraPosition[fIndex][2] != 0.0f)
     {
         XMVECTOR right = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(_cameraRight[fIndex]));
@@ -893,6 +941,47 @@ bool XeFG_Dx12::Dispatch()
                           XMVectorSet(x, y, z, 1.0f) };
 
         memcpy(constData.viewMatrix, view.r, sizeof(view));
+        viewValid = true;
+    }
+
+    // 切镜自检测：只比 view 矩阵左上 3x3 旋转块，平移行在大世界坐标下转 1 度
+    // 就能漂移几十，若参与判定会导致一动鼠标就逐帧 reset（内插塌）。
+    // 旋转元范围 [-1,1]：正常帧间 <0.2，单帧 30 度以上约 >0.5，阈值 0.8 居中。
+    // 另加命中冷却，转视角连帧只 reset 一次。开关见 [XeFG] CutReset。
+    const bool autoReset = Config::Instance()->FGXeFGAutoReset.value_or_default();
+    const bool cutReset = Config::Instance()->FGXeFGCutReset.value_or_default();
+    bool cameraCut = false;
+
+    if (_cutCooldown > 0)
+        _cutCooldown--;
+
+    if (cutReset && viewValid)
+    {
+        if (_hasPrevViewMatrix)
+        {
+            static constexpr int kRotIdx[9] = { 0, 1, 2, 4, 5, 6, 8, 9, 10 };
+            float rotDelta = 0.0f;
+            const auto* cur = reinterpret_cast<const float*>(constData.viewMatrix);
+
+            for (int i : kRotIdx)
+            {
+                const float d = fabsf(cur[i] - _prevViewMatrix[i]);
+
+                if (d > rotDelta)
+                    rotDelta = d;
+            }
+
+            cameraCut = (_cutCooldown == 0) && (rotDelta > 0.8f);
+
+            if (cameraCut)
+            {
+                _cutCooldown = 5;
+                LOG_DEBUG_ONLY("Camera cut detected (rot delta {:.2f}), forcing history reset", rotDelta);
+            }
+        }
+
+        memcpy(_prevViewMatrix, constData.viewMatrix, sizeof(_prevViewMatrix));
+        _hasPrevViewMatrix = true;
     }
 
     if (Config::Instance()->FGXeFGDepthInverted.value_or_default())
@@ -927,14 +1016,45 @@ bool XeFG_Dx12::Dispatch()
     constData.motionVectorScaleY = _mvScaleY[fIndex];
 
     if (!Config::Instance()->FGSkipReset.value_or_default())
-        constData.resetHistory = _reset[fIndex];
+    {
+        // 游戏信号 / 激活后首 burst（AutoReset）/ 切镜命中（CutReset）。
+        // 三者只影响本 burst 内插内容，不碰 present 计数与等待。
+        constData.resetHistory =
+            (_reset[fIndex] != 0) || (autoReset && _forceResetNext) || (cutReset && cameraCut);
+    }
     else
+    {
         constData.resetHistory = false;
+    }
+
+    _forceResetNext = false;
 
     switch (Config::Instance()->FTInput.value_or_default())
     {
     case FrameTimeSource::Input:
-        constData.frameRenderTime = (float) _ftDelta[fIndex];
+        // Ask the pacing first: _ftDelta is filled with lastFGFrameTime on this backend
+        // (Upscaler_Inputs_Dx12), i.e. the same self-referential present-to-present number
+        // under another name. Tried first it always wins and RenderTimeMs() is never reached.
+        // (Ported from Coldwood1026/OptiScalerDp4aUnlock c0ec7979)
+        constData.frameRenderTime = static_cast<float>(XeFGPacing::RenderTimeMs());
+        if (!(constData.frameRenderTime > 0.0f))
+        {
+            constData.frameRenderTime = (float) _ftDelta[fIndex];
+        }
+        else if (_lastFedFrameTimeMs > 0.0f && constData.frameRenderTime > _lastFedFrameTimeMs)
+        {
+            // Slew-limit upward steps: the measured period contains this
+            // burst's own pacing block, so feeding it back raw compounds
+            // burst-over-burst into a high-latency fixed point. Falls stay
+            // immediate; genuine scene load still converges within a few
+            // bursts (+15% / +0.25 ms per burst).
+            const float riseCap = _lastFedFrameTimeMs * 1.15f + 0.25f;
+
+            if (constData.frameRenderTime > riseCap)
+                constData.frameRenderTime = riseCap;
+        }
+
+        _lastFedFrameTimeMs = constData.frameRenderTime;
         break;
 
     case FrameTimeSource::Opti:
@@ -946,20 +1066,20 @@ bool XeFG_Dx12::Dispatch()
         break;
     }
 
-    LOG_DEBUG("Reset: {}, Opti FT: {}, Source FT: {}, Set FT: {}, Opti Id: {}, Reflex Id: {}", _reset[fIndex],
-              constData.frameRenderTime, _ftDelta[fIndex], constData.frameRenderTime, _frameCount,
-              State::Instance().reflexFrameId);
+    XeFGPacing::NoteFedFrameTime(constData.frameRenderTime);
+
+    LOG_DEBUG_ONLY("Reset: {}, Opti FT: {}, Source FT: {}, Set FT: {}, Opti Id: {}, Reflex Id: {}", _reset[fIndex],
+                   constData.frameRenderTime, _ftDelta[fIndex], constData.frameRenderTime, _frameCount,
+                   State::Instance().reflexFrameId);
 
     auto frameId = static_cast<uint32_t>(willDispatchFrame);
 
     auto result = XeFGProxy::TagFrameConstants()(_swapChainContext, frameId, &constData);
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
+        // Single-frame tag miss: skip this burst only. Deactivating here
+        // costs 10 paused frames and tanks 1% low for a transient miss.
         LOG_ERROR("TagFrameConstants error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-
-        state.fgChanged = true;
-        UpdateTarget();
-        Deactivate();
 
         return false;
     }
@@ -967,11 +1087,8 @@ bool XeFG_Dx12::Dispatch()
     result = XeFGProxy::SetPresentId()(_swapChainContext, frameId);
     if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
     {
+        // Same as above: skip the burst, stay active.
         LOG_ERROR("SetPresentId error: {} ({})", magic_enum::enum_name(result), (UINT) result);
-
-        state.fgChanged = true;
-        UpdateTarget();
-        Deactivate();
 
         return false;
     }
@@ -1001,9 +1118,9 @@ bool XeFG_Dx12::Dispatch()
                 top = Config::Instance()->FGRectTop.value_or(_interpolationTop[fIndex].value_or(calculatedTop));
         }
 
-        LOG_DEBUG("SwapChain Res: {}x{}, Interpolation Res: {}x{}", state.currentSwapchainDesc.BufferDesc.Width,
-                  state.currentSwapchainDesc.BufferDesc.Height, _interpolationWidth[fIndex],
-                  _interpolationHeight[fIndex]);
+        LOG_DEBUG_ONLY("SwapChain Res: {}x{}, Interpolation Res: {}x{}", state.currentSwapchainDesc.BufferDesc.Width,
+                       state.currentSwapchainDesc.BufferDesc.Height, _interpolationWidth[fIndex],
+                       _interpolationHeight[fIndex]);
 
         xefg_swapchain_d3d12_resource_data_t backbuffer = {};
         backbuffer.type = XEFG_SWAPCHAIN_RES_BACKBUFFER;
@@ -1018,15 +1135,14 @@ bool XeFG_Dx12::Dispatch()
 
         if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
         {
+            // Single-frame backbuffer miss: skip this burst only, same as above.
             LOG_ERROR("D3D12TagFrameResource Backbuffer error: {} ({})", magic_enum::enum_name(result), (UINT) result);
 
-            state.fgChanged = true;
-            UpdateTarget();
-            Deactivate();
+            return false;
         }
     }
 
-    LOG_DEBUG("Result: Ok");
+    LOG_DEBUG_ONLY("Result: Ok");
 
     return true;
 }
@@ -1275,7 +1391,7 @@ void XeFG_Dx12::CreateObjects(ID3D12Device* InDevice)
 bool XeFG_Dx12::Present()
 {
     auto fIndex = GetIndexWillBeDispatched();
-    LOG_DEBUG("fIndex: {}", fIndex);
+    LOG_DEBUG_ONLY("fIndex: {}", fIndex);
 
     if (Config::Instance()->FGDrawUIOverFG.value_or_default())
     {
@@ -1283,7 +1399,7 @@ bool XeFG_Dx12::Present()
         if (ui && (ui->validity == FG_ResourceValidity::UntilPresent ||
                    ui->validity == FG_ResourceValidity::UntilPresentFromDispatch))
         {
-            LOG_DEBUG("UI[{}] resource: {:X}, copy: {}", fIndex, (size_t) ui->resource, (size_t) ui->copy);
+            LOG_DEBUG_ONLY("UI[{}] resource: {:X}, copy: {}", fIndex, (size_t) ui->resource, (size_t) ui->copy);
             if (_renderUI.get() == nullptr)
             {
                 _renderUI = std::make_unique<RUI_Dx12>("RenderUI", _device,
@@ -1318,8 +1434,8 @@ bool XeFG_Dx12::Present()
             if (hudless && (hudless->validity == FG_ResourceValidity::UntilPresent ||
                             hudless->validity == FG_ResourceValidity::UntilPresentFromDispatch))
             {
-                LOG_DEBUG("Hudless[{}] resource: {:X}, copy: {}", fIndex, (size_t) hudless->resource,
-                          (size_t) hudless->copy);
+                LOG_DEBUG_ONLY("Hudless[{}] resource: {:X}, copy: {}", fIndex, (size_t) hudless->resource,
+                               (size_t) hudless->copy);
                 if (_hudlessCompare.get() == nullptr)
                 {
                     _hudlessCompare = std::make_unique<HC_Dx12>("HudlessCompare", _device);
@@ -1347,7 +1463,7 @@ bool XeFG_Dx12::Present()
     {
         if (_uiCommandListResetted[fIndex])
         {
-            LOG_DEBUG("Executing _uiCommandList[{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
+            LOG_DEBUG_ONLY("Executing _uiCommandList[{}]: {:X}", fIndex, (size_t) _uiCommandList[fIndex]);
             auto closeResult = _uiCommandList[fIndex]->Close();
 
             if (closeResult == S_OK)
@@ -1362,7 +1478,7 @@ bool XeFG_Dx12::Present()
 
         if (_scCommandListResetted[fIndex])
         {
-            LOG_DEBUG("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
+            LOG_DEBUG_ONLY("Executing _scCommandList[{}]: {:X}", fIndex, (size_t) _scCommandList[fIndex]);
             auto closeResult = _scCommandList[fIndex]->Close();
 
             if (closeResult == S_OK)
@@ -1376,10 +1492,21 @@ bool XeFG_Dx12::Present()
 
     if ((_fgFramePresentId - _lastFGFramePresentId) > 3 && IsActive() && !_waitingNewFrameData)
     {
-        LOG_DEBUG("Pausing FG");
-        Deactivate();
-        _waitingNewFrameData = true;
-        return false;
+        // Hysteresis: a single hitch skews present IDs without meaning the
+        // game stopped feeding frames. Pause only after consecutive starved
+        // Presents (~9+ without a NewFrame) instead of on the first trip.
+        if (++_presentStarveCount >= 3)
+        {
+            LOG_DEBUG("Pausing FG");
+            Deactivate();
+            _waitingNewFrameData = true;
+            _presentStarveCount = 0;
+            return false;
+        }
+    }
+    else
+    {
+        _presentStarveCount = 0;
     }
 
     _fgFramePresentId++;
@@ -1531,12 +1658,14 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
     // We usually don't copy any resources for XeFG, the ones with this tag are the exception
     if (inputResource->cmdList != nullptr && fResource->validity == FG_ResourceValidity::ValidButMakeCopy)
     {
-        LOG_DEBUG("Making a resource copy of: {}", magic_enum::enum_name(type));
+        LOG_DEBUG_ONLY("Making a resource copy of: {}", magic_enum::enum_name(type));
 
         ID3D12Resource* copyOutput = nullptr;
 
         if (_resourceCopy[fIndex].contains(type))
             copyOutput = _resourceCopy[fIndex][type];
+
+        ID3D12Resource* beforeCopy = copyOutput;
 
         if (!CopyResource(inputResource->cmdList, inputResource->resource, &copyOutput, inputResource->state))
         {
@@ -1545,7 +1674,11 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
         }
 
         _resourceCopy[fIndex][type] = copyOutput;
-        _resourceCopy[fIndex][type]->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
+
+        // Name once at creation: SetName is a kernel call plus string formatting,
+        // pointless to redo every frame for a reused buffer (also covers desc-mismatch realloc).
+        if (copyOutput != beforeCopy)
+            copyOutput->SetName(std::format(L"_resourceCopy[{}][{}]", fIndex, (UINT) type).c_str());
         fResource->copy = copyOutput;
         fResource->state = D3D12_RESOURCE_STATE_COPY_DEST;
 
@@ -1614,8 +1747,8 @@ bool XeFG_Dx12::SetResource(Dx12Resource* inputResource)
             auto frameId = static_cast<uint32_t>(_frameCount - indexDiff);
             auto result =
                 XeFGProxy::D3D12TagFrameResource()(_swapChainContext, fResource->cmdList, frameId, &resourceParam);
-            LOG_DEBUG("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
-                      magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
+            LOG_DEBUG_ONLY("D3D12TagFrameResource, frameId: {}, type: {} result: {} ({})", frameId,
+                           magic_enum::enum_name(type), magic_enum::enum_name(result), (int32_t) result);
 
             if (result != XEFG_SWAPCHAIN_RESULT_SUCCESS)
             {

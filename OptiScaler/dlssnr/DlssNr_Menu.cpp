@@ -27,7 +27,7 @@ static void RenderPlacement(Config* config)
         else if (feature && (feature->Api() != API::DX12 ||
                              (feature->IsWithDx12() && State::Instance().swapchainApi != API::DX11 &&
                               State::Instance().swapchainInteropApi != SwapchainInteropApi::Dx11wDx12)))
-            ImGui::TextWrapped("This option needs DirectX 12 or a DirectX 11 upscaler marked w/Dx12.");
+            ImGui::TextWrapped("此选项需要DirectX 12或标记w/Dx12的DirectX 11超分器。");
         else
             ImGui::TextWrapped("%s", DlssNr::FinishedPictureStatus().c_str());
     }
@@ -37,11 +37,11 @@ static void RenderPlacement(Config* config)
                          config->DlssNrResidualAcrossRr.value_or_default(), finishedPicture);
     if (placement.deferred)
     {
-        ImGui::TextWrapped("Private upscale: %s", DlssNr::DeferredDlssStatus().c_str());
-        ImGui::TextWrapped(finishedPicture ? "The game processes clean input through SR/RR and its effects. The "
-                                             "separately upscaled NR edit is applied to the finished picture."
-                                           : "The game processes clean input through SR/RR. The separately upscaled NR "
-                                             "edit is applied after upscale.");
+        ImGui::TextWrapped("独立放大：%s", DlssNr::DeferredDlssStatus().c_str());
+        ImGui::TextWrapped(finishedPicture ? "游戏经SR/RR及其特效处理纯净输入， "
+                                             "独立放大的NR编辑应用于最终画面。"
+                                           : "游戏经SR/RR处理纯净输入，独立放大的NR "
+                                             "编辑在放大后应用。");
     }
 }
 
@@ -56,7 +56,7 @@ static void RenderStatus(Config* config)
     // An existing model handle does not mean NR is enabled this frame.
     if (!enabled)
     {
-        ImGui::TextDisabled("NR off.");
+        ImGui::TextDisabled("NR关闭。");
     }
     else if (!dx12.running && !vulkan)
     {
@@ -70,50 +70,50 @@ static void RenderStatus(Config* config)
             ImGui::SameLine();
 
             if (nativeVk)
-                ImGui::TextUnformatted("Restart the game to retry native Vulkan NR.");
-            else if (ImGui::SmallButton("Retry"))
+                ImGui::TextUnformatted("重启游戏以重试原生Vulkan NR。");
+            else if (ImGui::SmallButton("重试"))
                 DlssNr::RetryAfterFailure();
         }
         else if (feature && feature->Api() == API::DX11 && !feature->IsWithDx12())
         {
-            ImGui::TextWrapped("NR needs the D3D12 bridge on D3D11. Choose an upscaler marked w/Dx12 and restart.");
+            ImGui::TextWrapped("D3D11上NR需要D3D12桥接，请选择标记w/Dx12的超分器并重启。");
         }
         else if (nativeVk && ResolvePlacement(config->DlssNrRunBeforeSr.value_or_default(),
                                               config->DlssNrDeferredDlss.value_or_default(),
                                               config->DlssNrResidualAcrossRr.value_or_default(), finishedPicture)
                                  .deferred)
         {
-            ImGui::TextWrapped("The private edit-upscale path requires DirectX 12 or its bridge. Disable separate edit "
-                               "upscaling to use native Vulkan NR.");
+            ImGui::TextWrapped("独立编辑放大路径需要DirectX 12或其桥接，请关闭独立编辑 "
+                               "放大以使用原生Vulkan NR。");
         }
         else
-            ImGui::TextUnformatted("Waiting for the upscaler to run.");
+            ImGui::TextUnformatted("等待超分器运行。");
     }
     else
     {
         const auto ms = vulkan ? vk.gpuTime : dx12.gpuTime;
 
         // Hiding the edit keeps model evaluation running.
-        const char* runSuffix = !config->DlssNrApplyModel.value_or_default() ? "  (model running, edit hidden)" : "";
+        const char* runSuffix = !config->DlssNrApplyModel.value_or_default() ? "（模型运行中，编辑隐藏）" : "";
 
         // Keep the running indicator green, using the theme's HDR-adjusted text brightness.
         const auto textColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
         ImGui::PushStyleColor(ImGuiCol_Text,
                               ImVec4(textColor.x * 0.55f, textColor.y * 0.80f, textColor.z * 0.55f, textColor.w));
         if (ms.has_value())
-            ImGui::Text("Running%s - %.2f ms elapsed%s", vulkan ? " natively on Vulkan" : "", ms.value(), runSuffix);
+            ImGui::Text("运行中%s-已用%.2f毫秒%s", vulkan ? "（原生Vulkan）" : "", ms.value(), runSuffix);
         else if (vulkan)
             // Measured but not yet read: the first few frames are still in the query ring.
-            ImGui::Text("Running natively on Vulkan - %llu frames%s", vk.frames, runSuffix);
+            ImGui::Text("原生Vulkan运行中-%llu帧%s", vk.frames, runSuffix);
         else
-            ImGui::Text("Running.%s", runSuffix);
+            ImGui::Text("运行中。%s", runSuffix);
         ImGui::PopStyleColor();
 
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Time between the start and end of NR on the GPU, including delays while other work "
-                              "runs.\nCompare FPS to check the effect on game performance.");
+            ImGui::SetTooltip("NR在GPU上起止时间，含其他任务等待延迟， "
+                              "对比FPS查看对游戏性能的影响。");
 
         if (ms.has_value())
         {
@@ -138,24 +138,24 @@ void RenderMenu(Config* config, float menuResScale)
 {
     using namespace MenuSections;
     ImGui::Spacing();
-    if (auto header = ScopedCollapsingHeader("DLSS Neural Rendering"); header.IsHeaderOpen())
+    if (auto header = ScopedCollapsingHeader("DLSS神经渲染"); header.IsHeaderOpen())
     {
         ScopedIndent indent {};
         const float toggleGap = ImGui::GetStyle().ItemSpacing.x;
         const float toggleWidth = (ImGui::GetContentRegionAvail().x - toggleGap) * 0.5f;
         const float toggleRight = ImGui::GetCursorPosX() + toggleWidth + toggleGap;
         bool enabled = config->DlssNrEnabled.value_or_default();
-        if (PipelineUi::CheckboxWrapped("Enable Neural Rendering", &enabled, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("启用神经渲染", &enabled, toggleWidth))
             config->DlssNrEnabled = enabled;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Enable NR processing.");
+            ImGui::SetTooltip("启用NR处理。");
 
         bool applyModel = config->DlssNrApplyModel.value_or_default();
-        if (PipelineUi::CheckboxWrapped("Apply model", &applyModel, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("应用模型", &applyModel, toggleWidth))
             config->DlssNrApplyModel = applyModel;
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Show or hide the NR effect. The model still runs when hidden.\nDisable Enable Neural "
-                              "Rendering to stop its GPU cost.");
+            ImGui::SetTooltip("显示或隐藏NR效果，隐藏时模型仍运行。关闭启用神经渲染 "
+                              "以停止GPU开销。");
 
         const auto feature = State::Instance().currentFeature;
         const bool rayReconstruction = feature && feature->GetUpscalerType() == Upscaler::DLSSD;
@@ -166,31 +166,31 @@ void RenderMenu(Config* config, float menuResScale)
         bool generateBefore = placement.beforeUpscale;
         ImGui::SameLine(toggleRight);
         ImGui::BeginDisabled(placement.deferred);
-        if (PipelineUi::CheckboxWrapped("Generate model before upscale", &generateBefore, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("超分前生成模型", &generateBefore, toggleWidth))
         {
             config->DlssNrRunBeforeSr = generateBefore;
             config->DlssNrResidualAcrossRr = false;
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip(placement.deferred ? "The separate-edit path always generates before upscale."
-                                                 : "Run NR before the game's upscaler, including RR.");
+            ImGui::SetTooltip(placement.deferred ? "独立编辑路径始终在超分前生成。"
+                                                 : "在游戏超分器（含RR）之前运行NR。");
 
-        if (PipelineUi::CheckboxWrapped("Apply NR to the finished picture", &finished, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("将NR应用于最终画面", &finished, toggleWidth))
         {
             config->DlssNrFinishedPicture = finished;
             DlssNr::RetryAfterFailure();
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
-                "Apply NR after game effects and HUD. Early generation carries the edit through a separate upscaler.");
+                "在游戏特效和HUD后应用NR，早期生成经独立超分器传递编辑。");
 
         placement = ResolvePlacement(config->DlssNrRunBeforeSr.value_or_default(),
                                      config->DlssNrDeferredDlss.value_or_default(),
                                      config->DlssNrResidualAcrossRr.value_or_default(), finished);
         ImGui::SameLine(toggleRight);
         bool deferred = placement.deferred;
-        if (PipelineUi::CheckboxWrapped("Generate before upscale, apply after upscale", &deferred, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("超分前生成，超分后应用", &deferred, toggleWidth))
         {
             config->DlssNrDeferredDlss = deferred;
             config->DlssNrResidualAcrossRr = false; // Clear the legacy alias when the unified option changes.
@@ -199,8 +199,8 @@ void RenderMenu(Config* config, float menuResScale)
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
-                "Keep the game's SR/RR input clean and upscale only the NR edit with a separate non-RR backend."
-                "\nApply after upscale, or at presentation when finished-picture mode is enabled.");
+                "保持游戏SR/RR输入纯净，仅用独立非RR后端放大NR编辑。"
+                "超分后应用，终画面模式下在呈现时应用。");
         ImGui::Spacing();
 
         placement = ResolvePlacement(config->DlssNrRunBeforeSr.value_or_default(),
@@ -210,10 +210,10 @@ void RenderMenu(Config* config, float menuResScale)
         if (placement.deferred && !nativePrivateVk)
         {
             int backend = (int) GetPrivateUpscaler(config->DlssNrPrivateUpscaler.value_or_default());
-            if (ImGui::Combo("Private NR upscaler", &backend, "DLSS\0FSR 2.2\0FSR (FidelityFX)\0XeSS\0"))
+            if (ImGui::Combo("独立NR超分器", &backend, "DLSS\0FSR 2.2\0FSR (FidelityFX)\0XeSS\0"))
                 config->DlssNrPrivateUpscaler = backend;
             HelpMarker(
-                "Upscales only the NR edit, with or without game RR. FSR (FidelityFX) and XeSS need their runtimes.");
+                "仅放大NR编辑，游戏RR可有可无，FSR与XeSS需对应运行时。");
         }
 
         PipelineUi::View view;
@@ -242,7 +242,7 @@ void RenderMenu(Config* config, float menuResScale)
         static constexpr void (*sections[])(Config*) = { RenderPlacement, RenderInput, RenderModel, RenderBlend };
         sections[(int) selected](config);
         ImGui::PopItemWidth();
-        if (ImGui::CollapsingHeader("Inspect NR"))
+        if (ImGui::CollapsingHeader("检查NR"))
         {
             ImGui::PushItemWidth(std::min(220.0f * menuResScale, ImGui::GetContentRegionAvail().x * 0.42f));
             RenderInspect(config);
