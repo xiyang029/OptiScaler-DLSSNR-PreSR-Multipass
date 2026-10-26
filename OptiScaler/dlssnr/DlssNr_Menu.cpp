@@ -212,82 +212,73 @@ void RenderMenu(Config* config, float menuResScale)
         const bool denoiseBlocked = placement.deferred || finished;
         bool denoiseFirst = config->DlssNrDenoiseFirst.value_or_default();
         ImGui::BeginDisabled(denoiseBlocked);
-        if (PipelineUi::CheckboxWrapped("Denoise at native, then NR, then upscale", &denoiseFirst, toggleWidth))
+        if (PipelineUi::CheckboxWrapped("先在原生分辨率去噪，再NR，再超分", &denoiseFirst, toggleWidth))
             config->DlssNrDenoiseFirst = denoiseFirst;
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip(
                 denoiseBlocked
-                    ? "Turn off the separate-edit and finished-picture options first."
-                    : "Runs the game's own upscaler once more at the render resolution (Ray Reconstruction if the game "
-                      "uses it, otherwise DLSS) so NR is shown a clean, denoised, steady image instead of the noisy "
-                      "jittered one.\nNR edits that image; the second step below decides how the edit reaches the "
-                      "screen.\nNative DirectX 12 only. Costs one extra upscaler pass per frame.");
+                    ? "请先关闭独立编辑和终画面选项。"
+                    : "在渲染分辨率下再跑一次游戏自带超分器（游戏用RR则用RR，否则DLSS），让NR面对的是干净、"
+                      "已去噪、稳定的画面，而不是带噪点和抖动的原始渲染。\nNR在这张画面上做编辑；下方第二步决定"
+                      "编辑如何送到屏幕。\n仅限原生DirectX 12。每帧多一次超分开销。");
         if (denoiseFirst && !denoiseBlocked)
         {
             ScopedIndent denoiseIndent {};
             int step = std::clamp(config->DlssNrDenoiseFirstStep.value_or_default(), 0, 2);
-            if (ImGui::Combo("Second step", &step,
-                             "Game upscaler again, jitter zeroed\0Private DLSS SR, jitter zeroed\0Edit onto the raw "
-                             "render, then the game upscaler\0"))
+            if (ImGui::Combo("第二步", &step,
+                             "再次调用游戏超分器，抖动归零\0独立DLSS SR，抖动归零\0把编辑叠加到原始渲染，"
+                             "再交给游戏超分器\0"))
                 config->DlssNrDenoiseFirstStep = step;
             HelpMarker(
-                "Game upscaler again: the game's upscaler receives the NR'd clean image. Simple, but the second pass "
-                "gets no real sub-pixel samples, so it can look softer than native.\n\n"
-                "Private DLSS SR: the same, but a separate plain DLSS pass does the upscale and replaces the output. "
-                "Avoids running Ray Reconstruction twice.\n\n"
-                "Edit onto the raw render: only NR's change is taken from the clean image, lined up with the raw "
-                "render's jitter and added onto it. The game's upscaler then sees real samples carrying the edit. "
-                "Sharpest in theory; Ray Reconstruction may soften part of the edit.");
+                "再次调用游戏超分器：NR处理后的干净画面交给游戏超分器。实现简单，但第二次超分拿不到真实的"
+                "子像素采样，可能比原生更软。\n\n"
+                "独立DLSS SR：同上，但由一次独立的普通DLSS超分完成并替换输出，避免重复运行光线重建。\n\n"
+                "把编辑叠加到原始渲染：只从干净画面取出NR的变化量，按原始渲染的抖动对齐后叠加到其上。"
+                "游戏超分器拿到的就是携带编辑的真实采样。理论上最锐利；光线重建可能削弱部分编辑。");
             if (step == 2)
             {
                 int edit = config->DlssNrDenoiseFirstEdit.value_or_default() == 1 ? 1 : 0;
-                if (ImGui::Combo("Edit as", &edit, "Difference (added)\0Ratio (multiplied)\0"))
+                if (ImGui::Combo("编辑形式", &edit, "差值（相加）\0比例（相乘）\0"))
                     config->DlssNrDenoiseFirstEdit = edit;
-                HelpMarker("Ratio multiplies each raw pixel by NR / clean, so every noisy sample keeps its own hue "
-                           "and only its brightness and tint move. Recommended.\nDifference adds NR - clean as an "
-                           "absolute amount. On samples that came back dark that amount outweighs the sample, which "
-                           "recolours them and roughly doubles the colour noise the upscaler receives.");
+                HelpMarker("比例：每个原始像素乘以 NR/干净，噪点采样各自保留色相，只有亮度和色调变化。推荐。\n"
+                           "差值：把 NR 减干净 作为绝对量相加。对于本身很暗的采样，这个量会超过采样值，使其偏色，"
+                           "并让超分器收到的色彩噪声大约翻倍。");
                 if (edit == 1)
                 {
                     bool fireflies = config->DlssNrDenoiseFirstFireflyGuard.value_or_default();
-                    if (ImGui::Checkbox("Do not multiply fireflies", &fireflies))
+                    if (ImGui::Checkbox("不放大萤火虫噪点", &fireflies))
                         config->DlssNrDenoiseFirstFireflyGuard = fireflies;
-                    HelpMarker("A raw sample far brighter than the clean value is a path-tracing firefly, not a lit "
-                               "pixel. Multiplying it by the ratio makes it brighter, and when the camera is still "
-                               "the game's Ray Reconstruction can keep such sparkles in shadows. With this on, those "
-                               "samples get the absolute change their pixel would have had instead. Turn off to "
-                               "compare.");
+                    HelpMarker("比干净值亮得多的原始采样是路径追踪萤火虫，而不是受光像素。按比例相乘会让它更亮，"
+                               "镜头静止时游戏的光线重建会把这些亮斑留在阴影里。开启后这些采样改用该像素本应"
+                               "得到的绝对变化量。关闭可作对比。");
                 }
 
                 bool shift = config->DlssNrDenoiseFirstShift.value_or_default();
-                if (ImGui::Checkbox("Shift the edit by the frame's jitter", &shift))
+                if (ImGui::Checkbox("按该帧抖动偏移编辑", &shift))
                     config->DlssNrDenoiseFirstShift = shift;
-                HelpMarker("The clean image sits on a steady pixel grid; the raw render is offset by a sub-pixel "
-                           "jitter that changes every frame. Shifting the edit by that jitter lines the two up. "
-                           "Turn off only to compare.");
+                HelpMarker("干净画面位于稳定的像素网格上；原始渲染每帧都有一个子像素抖动偏移。"
+                           "按该抖动偏移编辑可使两者对齐。仅在对比时关闭。");
                 if (shift)
                 {
                     bool flip = config->DlssNrDenoiseFirstFlipJitter.value_or_default();
-                    if (ImGui::Checkbox("Flip the jitter direction", &flip))
+                    if (ImGui::Checkbox("反转抖动方向", &flip))
                         config->DlssNrDenoiseFirstFlipJitter = flip;
-                    HelpMarker("Engines disagree on which way the jitter value points. The wrong direction doubles "
-                               "the misalignment instead of removing it. If edges look worse with the shift on than "
-                               "off, flip this.");
+                    HelpMarker("各引擎对抖动值指向的定义不一致。方向错误会让错位翻倍而非消除。"
+                               "若开启偏移后边缘反而比关闭更差，就翻转此项。");
                     int kernel = std::clamp(config->DlssNrDenoiseFirstKernel.value_or_default(), 0, 2);
-                    if (ImGui::Combo("Edit resampling", &kernel, "Bilinear\0Catmull-Rom\0Lanczos 2\0"))
+                    if (ImGui::Combo("编辑重采样", &kernel, "Bilinear\0Catmull-Rom\0Lanczos 2\0"))
                         config->DlssNrDenoiseFirstKernel = kernel;
-                    HelpMarker("How the edit is interpolated at the shifted position. Bilinear is soft and never "
-                               "overshoots. Catmull-Rom is sharp with little overshoot. Lanczos 2 is the sharpest "
-                               "and can ring around hard edges.");
+                    HelpMarker("偏移位置上编辑的插值方式。双线性偏软且不会过冲。Catmull-Rom 锐利、过冲很小。"
+                               "Lanczos 2 最锐利，但硬边缘周围可能出现振铃。");
                     bool clampEdit = config->DlssNrDenoiseFirstNeighbourhoodClamp.value_or_default();
-                    if (ImGui::Checkbox("Clamp the edit to its neighbours", &clampEdit))
+                    if (ImGui::Checkbox("把编辑限制在邻域范围内", &clampEdit))
                         config->DlssNrDenoiseFirstNeighbourhoodClamp = clampEdit;
-                    HelpMarker("Limits the interpolated edit to the range of the four nearest source pixels. Removes "
-                               "ringing from the sharper kernels at the cost of a little sharpness.");
+                    HelpMarker("把插值后的编辑限制在最近四个源像素的取值范围内。消除较锐核的振铃，"
+                               "代价是略微损失锐度。");
                 }
             }
-            ImGui::TextWrapped("Denoise first: %s", DlssNr::DenoiseFirstStatus().c_str());
+            ImGui::TextWrapped("先去噪：%s", DlssNr::DenoiseFirstStatus().c_str());
             ImGui::Spacing();
         }
 

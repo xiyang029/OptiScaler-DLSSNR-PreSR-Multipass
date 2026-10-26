@@ -273,16 +273,16 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
 
 template <typename Option> static void NrModelCombo(Option* opt, bool allowInherit)
 {
-    static const char* names[] = { "Automatic", "Original", "Optimized" };
+    static const char* names[] = { "自动", "原始", "优化" };
     const bool inherited = allowInherit && !opt->has_value();
     const uint32_t preset = opt->has_value() ? opt->value() : 0u;
-    const char* preview = inherited                      ? "Inherit pass 1"
+    const char* preview = inherited                      ? "沿用第1遍"
                           : preset < IM_ARRAYSIZE(names) ? names[preset]
-                                                         : "Unavailable preset";
+                                                         : "预设不可用";
 
-    if (ImGui::BeginCombo("NR model", preview))
+    if (ImGui::BeginCombo("NR模型", preview))
     {
-        if (allowInherit && ImGui::Selectable("Inherit pass 1", inherited))
+        if (allowInherit && ImGui::Selectable("沿用第1遍", inherited))
             *opt = std::optional<uint32_t> {};
         for (uint32_t value = 0; value < IM_ARRAYSIZE(names); ++value)
         {
@@ -294,11 +294,11 @@ template <typename Option> static void NrModelCombo(Option* opt, bool allowInher
         }
         ImGui::EndCombo();
     }
-    HelpMarker("Automatic: use the installed NR runtime's default model.\n"
-               "Original: use the original model (preset 1).\n"
-               "Optimized: use the smaller FP8 model (preset 2), included in NR 310.9.16.0.\n"
-               "Older runtimes fall back to their default when a model is unavailable.\n"
-               "Changing the model rebuilds this pass and resets its history.");
+    HelpMarker("自动：使用已安装NR运行时的默认模型。\n"
+               "原始：使用原始模型（预设1）。\n"
+               "优化：使用更小的FP8模型（预设2），随NR 310.9.16.0提供。\n"
+               "模型不可用时，较旧的运行时会回退到默认模型。\n"
+               "更换模型会重建该遍并重置其历史。");
 }
 
 void RenderModel(Config* config)
@@ -376,7 +376,7 @@ void RenderModel(Config* config)
         if (selectedPass <= 2)
             NrModelCombo(&pass.preset, true);
         else
-            ImGui::TextDisabled("NR model: inherits pass 1");
+            ImGui::TextDisabled("NR模型：沿用第1遍");
         int style = pass.style.has_value() ? std::clamp((int) pass.style.value(), 0, 2) + 1 : 0;
         if (ImGui::Combo("风格", &style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles)))
             pass.style = style ? std::optional<uint32_t>(style - 1) : std::nullopt;
