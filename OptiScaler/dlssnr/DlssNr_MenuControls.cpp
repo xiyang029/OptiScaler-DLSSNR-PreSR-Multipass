@@ -180,8 +180,8 @@ void RenderInput(Config* config)
         ImGui::BeginDisabled(!reduced);
 
         static const char* enlargeNames[] = { "经典", "匹配残差", "匹配残差+DLSS",
-                                              "灯光+色彩", "灯光+色彩+DLSS" };
-        int enlarge = (int) std::min(config->DlssNrTransfer.value_or_default(), 4u);
+                                              "灯光+色彩", "灯光+色彩+DLSS", "边缘感知" };
+        int enlarge = (int) std::min(config->DlssNrTransfer.value_or_default(), 5u);
 
         if (ImGui::Combo("放大方式", &enlarge, enlargeNames, IM_ARRAYSIZE(enlargeNames)))
             config->DlssNrTransfer = (uint32_t) enlarge;
@@ -189,8 +189,8 @@ void RenderInput(Config* config)
         ImGui::EndDisabled();
 
         HelpMarker("低于100%：灯光+色彩分别缩放灯光增益与色彩变化再应用， "
-                   "可减少缩放光晕，纯黑像素保持黑色， "
-                   "DLSS模式需超分后DX12处理。");
+                   "可减少缩放光晕，纯黑像素保持黑色。边缘感知依据原画面亮度，"
+                   "让编辑落在边缘正确的一侧。 DLSS模式需超分后DX12处理。");
     }
     static const char* reversibleNames[] = { "关闭（软拐点）", "Neutwo代理+合成", "Neutwo代理+替换",
                                              "混合代理+合成", "混合代理+替换" };
@@ -271,6 +271,36 @@ static void DeferredSlider(const char* label, Option* opt, float mn, float mx, f
         HelpMarker("皮肤细节，-1跟随局部结构。");
 }
 
+template <typename Option> static void NrModelCombo(Option* opt, bool allowInherit)
+{
+    static const char* names[] = { "Automatic", "Original", "Optimized" };
+    const bool inherited = allowInherit && !opt->has_value();
+    const uint32_t preset = opt->has_value() ? opt->value() : 0u;
+    const char* preview = inherited                      ? "Inherit pass 1"
+                          : preset < IM_ARRAYSIZE(names) ? names[preset]
+                                                         : "Unavailable preset";
+
+    if (ImGui::BeginCombo("NR model", preview))
+    {
+        if (allowInherit && ImGui::Selectable("Inherit pass 1", inherited))
+            *opt = std::optional<uint32_t> {};
+        for (uint32_t value = 0; value < IM_ARRAYSIZE(names); ++value)
+        {
+            const bool selected = !inherited && preset == value;
+            if (ImGui::Selectable(names[value], selected))
+                *opt = value;
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    HelpMarker("Automatic: use the installed NR runtime's default model.\n"
+               "Original: use the original model (preset 1).\n"
+               "Optimized: use the smaller FP8 model (preset 2), included in NR 310.9.16.0.\n"
+               "Older runtimes fall back to their default when a model is unavailable.\n"
+               "Changing the model rebuilds this pass and resets its history.");
+}
+
 void RenderModel(Config* config)
 {
     bool unlockPasses = config->DlssNrUnlockPasses.value_or_default();
@@ -333,6 +363,7 @@ void RenderModel(Config* config)
     static const char* inheritedStyles[] = { "自动", "标准", "自然", "电影" };
     if (selectedPass == 0)
     {
+        NrModelCombo(&config->DlssNrPreset, false);
         int style = (int) std::min(config->DlssNrStyle.value_or_default(), 2u);
         if (ImGui::Combo("风格", &style, styles, IM_ARRAYSIZE(styles)))
             config->DlssNrStyle = (uint32_t) style;
@@ -342,6 +373,10 @@ void RenderModel(Config* config)
     else
     {
         auto& pass = config->DlssNrPassOverrides[selectedPass - 1];
+        if (selectedPass <= 2)
+            NrModelCombo(&pass.preset, true);
+        else
+            ImGui::TextDisabled("NR model: inherits pass 1");
         int style = pass.style.has_value() ? std::clamp((int) pass.style.value(), 0, 2) + 1 : 0;
         if (ImGui::Combo("风格", &style, inheritedStyles, IM_ARRAYSIZE(inheritedStyles)))
             pass.style = style ? std::optional<uint32_t>(style - 1) : std::nullopt;
@@ -353,7 +388,21 @@ void RenderModel(Config* config)
 void RenderBlend(Config* config)
 {
     if (config->DlssNrResidualAcrossRr.value_or_default())
+    {
+        Checkbox("拒绝过期历史", config->DlssNrHistoryRejection);
+        HelpMarker("RR残差路径：输入变化时拒绝旧编辑，并将其限制在附近的当前编辑内。"
+                   "可减少拖影。关闭则保留原有历史滤镜。");
         Slider("历史置信度阈值", config->DlssNrResidualConfidenceSensitivity, 0.0f, 2.0f, "%.3f", 0.0f);
+    }
+    if (ImGui::TreeNode("光晕抑制（实验）"))
+    {
+        Slider("亮物体附近的暗边", config->DlssNrHaloSuppression, 0.0f, 1.0f, "%.2f", 0.0f);
+        Slider("暗物体附近的暗边", config->DlssNrHaloBrightSuppression, 0.0f, 1.0f, "%.2f", 0.0f);
+        Slider("光晕半径（NR像素）", config->DlssNrHaloRadius, 1.0f, 4.0f, "%.0f", 2.0f);
+        HelpMarker("提亮细微暗边，同时保留大面积光照。两项强度均为0时关闭该处理。 "
+                   "可能让真实阴影变亮；启用前请先对比效果。");
+        ImGui::TreePop();
+    }
     if (config->DlssNrFinishedPicture.value_or_default() &&
         (config->DlssNrRunBeforeSr.value_or_default() || config->DlssNrDeferredDlss.value_or_default()))
     {
